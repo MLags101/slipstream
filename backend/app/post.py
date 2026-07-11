@@ -315,15 +315,10 @@ def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float) -> dict:
     }
 
 
-def build_slice_viz(case_dir: str | Path, axis: str, rho: float) -> dict:
-    """Center cutting plane (y or z normal) with u_mag (m/s) and p (Pa)."""
-    name = "sliceY" if axis == "y" else "sliceZ"
-    path = _find_sampled(Path(case_dir), name)
-    if path is None:
-        raise RuntimeError(f"sampled {name} not found under postProcessing/surfaces1")
-    points, tris, fields = _load_tri_mesh(path)
+def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float) -> dict:
+    """Flat-array JSON for a sampled plane carrying U and p."""
     if "U" not in fields or "p" not in fields:
-        raise RuntimeError(f"fields U/p missing on {name}")
+        raise RuntimeError("fields U/p missing on sampled plane")
     u = _clean(fields["U"]).reshape(len(points), -1)
     u_mag = np.linalg.norm(u, axis=1)
     p_pa = _clean(fields["p"]).reshape(-1) * rho
@@ -333,6 +328,66 @@ def build_slice_viz(case_dir: str | Path, axis: str, rho: float) -> dict:
         "fields": {"u_mag": _tolist(u_mag), "p": _tolist(p_pa)},
         "ranges": {"u_mag": _rng(u_mag), "p": _rng(p_pa)},
     }
+
+
+def build_slice_viz(case_dir: str | Path, axis: str, rho: float) -> dict:
+    """Center cutting plane (y or z normal) with u_mag (m/s) and p (Pa)."""
+    name = "sliceY" if axis == "y" else "sliceZ"
+    path = _find_sampled(Path(case_dir), name)
+    if path is None:
+        raise RuntimeError(f"sampled {name} not found under postProcessing/surfaces1")
+    points, tris, fields = _load_tri_mesh(path)
+    return plane_payload(points, tris, fields, rho)
+
+
+def load_legacy_polylines(path: Path) -> tuple[np.ndarray, list[list[int]], dict]:
+    """Parse an ASCII legacy VTK POLYDATA file containing LINES (streamline
+    tracks). Returns (points, polylines as point-index lists, point_fields)."""
+    lines = path.read_text().splitlines()
+    points: np.ndarray | None = None
+    tracks: list[list[int]] = []
+    point_fields: dict[str, np.ndarray] = {}
+    mode: str | None = None
+    i = 0
+    while i < len(lines):
+        parts = lines[i].split()
+        i += 1
+        if not parts:
+            continue
+        kw = parts[0]
+        if kw == "POINTS":
+            n = int(parts[1])
+            vals, i = _read_numbers(lines, i, 3 * n)
+            points = np.asarray(vals, dtype=np.float64).reshape(n, 3)
+        elif kw == "LINES":
+            ncells, ntot = int(parts[1]), int(parts[2])
+            vals, i = _read_numbers(lines, i, ntot, conv=int)
+            j = 0
+            for _ in range(ncells):
+                c = vals[j]
+                tracks.append(vals[j + 1:j + 1 + c])
+                j += c + 1
+        elif kw == "POINT_DATA":
+            mode = "point"
+        elif kw == "CELL_DATA":
+            mode = "cell"
+        elif kw == "FIELD":
+            nfields = int(parts[2])
+            for _ in range(nfields):
+                while i < len(lines) and not lines[i].split():
+                    i += 1
+                name, ncomp, n, _typ = lines[i].split()
+                i += 1
+                ncomp, n = int(ncomp), int(n)
+                vals, i = _read_numbers(lines, i, ncomp * n)
+                arr = np.asarray(vals, dtype=np.float64)
+                if ncomp > 1:
+                    arr = arr.reshape(n, ncomp)
+                if mode == "point":
+                    point_fields[name] = arr
+    if points is None or not tracks:
+        raise RuntimeError(f"no line tracks in {path.name}")
+    return points, tracks, point_fields
 
 
 # --------------------------------------------------------------------------

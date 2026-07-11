@@ -17,6 +17,20 @@ QUALITY = {
 NPROCS = 6
 
 
+def domain_bounds(model: dict) -> list[list[float]]:
+    """Wind tunnel domain bbox: x in [xmin-4L, xmax+9L], y/z half-extent
+    3W / 3H, widened until frontal blockage < 5%."""
+    (bx0, by0, bz0), (bx1, by1, bz1) = model["bbox_m"]
+    L, W, H = bx1 - bx0, by1 - by0, bz1 - bz0
+    dx0, dx1 = bx0 - 4.0 * L, bx1 + 9.0 * L
+    hy, hz = 3.0 * W, 3.0 * H
+    area = model["frontal_area_m2"]
+    while area / ((2 * hy) * (2 * hz)) > 0.05:
+        hy *= 1.25
+        hz *= 1.25
+    return [[dx0, -hy, -hz], [dx1, hy, hz]]
+
+
 def compute_params(model: dict, config: dict) -> dict:
     """Derive all template placeholder values from model metadata + run config."""
     bbox = model["bbox_m"]
@@ -32,17 +46,7 @@ def compute_params(model: dict, config: dict) -> dict:
     nu = float(config.get("nu") or 1.5e-5)
     q = QUALITY[config["quality"]]
 
-    # Domain: x in [xmin-4L, xmax+9L], y/z half-extent 3W / 3H, blockage-safe.
-    dx0, dx1 = bx0 - 4.0 * L, bx1 + 9.0 * L
-    hy = 3.0 * W
-    hz = 3.0 * H
-    # Enforce frontal blockage < 5% (frontal area / domain cross-section)
-    area = model["frontal_area_m2"]
-    while area / ((2 * hy) * (2 * hz)) > 0.05:
-        hy *= 1.25
-        hz *= 1.25
-    dy0, dy1 = -hy, hy
-    dz0, dz1 = -hz, hz
+    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(model)
 
     domain_len = dx1 - dx0
     cell = domain_len / 70.0

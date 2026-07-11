@@ -125,7 +125,7 @@ export function RunDetailView({ id, onDelete, onUnreachable }: Props) {
       {run.status === "done" && run.result && (
         <>
           <ResultsPanel result={run.result} />
-          <ResultViewer runId={id} config={run.config} />
+          <ResultViewer runId={id} config={run.config} model={run.model} />
         </>
       )}
 

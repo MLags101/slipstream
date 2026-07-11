@@ -10,7 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import post
+from . import foamcase, ondemand, post
 from .runner import Runner
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "runs"
@@ -95,11 +95,14 @@ def list_runs():
 @app.get("/api/runs/{run_id}")
 def get_run(run_id: str):
     s = _get_state(run_id)
+    model = dict(s["model"]) if s["model"] else None
+    if model and "bbox_m" in model:
+        model["domain_bbox_m"] = foamcase.domain_bounds(model)
     return {
         "id": s["id"], "name": s["name"], "status": s["status"],
         "progress": s["progress"], "message": s["message"],
         "created_at": s["created_at"], "config": s["config"],
-        "model": s["model"], "mesh_cells": s["mesh_cells"],
+        "model": model, "mesh_cells": s["mesh_cells"],
         "result": s["result"], "error": s["error"],
     }
 
@@ -158,10 +161,40 @@ def get_viz_surface(run_id: str):
 
 
 @app.get("/api/runs/{run_id}/viz/slice")
-def get_viz_slice(run_id: str, axis: str = "y"):
-    if axis not in ("y", "z"):
-        raise HTTPException(422, "axis must be 'y' or 'z'")
-    return _serve_viz(run_id, f"viz_slice_{axis}.json")
+def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
+    if axis not in ("x", "y", "z"):
+        raise HTTPException(422, "axis must be 'x', 'y' or 'z'")
+    # Fast path: the center y/z planes sampled during the run.
+    if pos is None and axis in ("y", "z"):
+        return _serve_viz(run_id, f"viz_slice_{axis}.json")
+
+    s = _get_state(run_id)
+    if s["status"] != "done":
+        raise HTTPException(404, "visualization not available (run not done)")
+    ax = {"x": 0, "y": 1, "z": 2}[axis]
+    lo, hi = (foamcase.domain_bounds(s["model"])[i][ax] for i in (0, 1))
+    eps = 0.01 * (hi - lo)
+    pos = min(max(pos or 0.0, lo + eps), hi - eps)
+    try:
+        payload = ondemand.slice_json(DATA_DIR / run_id, axis, pos,
+                                      float(s["config"].get("rho") or 1.225))
+    except RuntimeError as e:
+        raise HTTPException(422, str(e))
+    payload["axis"] = axis
+    payload["pos"] = pos
+    return payload
+
+
+@app.get("/api/runs/{run_id}/viz/streamlines")
+def get_viz_streamlines(run_id: str):
+    s = _get_state(run_id)
+    if s["status"] != "done":
+        raise HTTPException(404, "visualization not available (run not done)")
+    try:
+        return ondemand.streamlines_json(DATA_DIR / run_id, s["model"],
+                                         float(s["config"].get("rho") or 1.225))
+    except RuntimeError as e:
+        raise HTTPException(422, str(e))
 
 
 @app.delete("/api/runs/{run_id}")

@@ -78,10 +78,19 @@ Model surface mesh with pressure, as flat arrays for three.js BufferGeometry:
 ```
 Positions in meters (model centered at origin).
 
-### GET /api/runs/{id}/viz/slice?axis=y  (404 until done)
-Cutting plane through model center, same flat-array format, triangulated:
-`fields: {"u_mag":[m/s],"p":[Pa]}`, plus `"ranges"`. `axis=y` (side view, default) and
-`axis=z` (top view) both supported.
+### GET /api/runs/{id}/viz/slice?axis=y&pos=0.05  (404 until done)
+Cutting plane, flat-array format, triangulated: `fields: {"u_mag":[m/s],"p":[Pa]}`, plus
+`"ranges"`. `axis` ∈ x|y|z. Without `pos`, the center y/z planes sampled during the run are
+served instantly; with `pos` (meters, clamped into the domain) the plane is generated
+on demand by running `postProcess` on the saved fields (~2-3 s, then cached); the response
+echoes `axis`/`pos`. Run detail's `model.domain_bbox_m` gives the valid position range.
+
+### GET /api/runs/{id}/viz/streamlines  (404 until done)
+Streamline tracks seeded on a 7×7 rake upstream of the model (on-demand, cached):
+```json
+{"positions":[...], "lines":[[i0,i1,...],...], "fields":{"u_mag":[...]},
+ "ranges":{"u_mag":[min,max]}}
+```
 
 ### DELETE /api/runs/{id}
 Deletes run dir. 409 if currently executing.

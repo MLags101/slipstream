@@ -40,6 +40,8 @@ export interface RunSummary {
 
 export interface ModelInfo {
   bbox_m: [[number, number, number], [number, number, number]];
+  /** Wind tunnel domain extents (meters); present on run detail responses. */
+  domain_bbox_m?: [[number, number, number], [number, number, number]];
   frontal_area_m2: number;
   triangles: number;
 }
@@ -109,9 +111,20 @@ export interface VizSlice {
   indices: number[];
   fields: { u_mag: number[]; p: number[] };
   ranges: { u_mag: [number, number]; p: [number, number] };
+  /** Echoed back for on-demand slices (pos clamped into the domain). */
+  axis?: SliceAxis;
+  pos?: number;
 }
 
-export type SliceAxis = "y" | "z";
+/** GET /api/runs/{id}/viz/streamlines — polyline tracks, u_mag per vertex. */
+export interface VizStreamlines {
+  positions: number[];
+  lines: number[][];
+  fields: { u_mag: number[] };
+  ranges: { u_mag: [number, number] };
+}
+
+export type SliceAxis = "x" | "y" | "z";
 
 /** Error thrown for non-2xx responses (has the HTTP status). */
 export class ApiError extends Error {
@@ -203,8 +216,13 @@ export const api = {
     return getJson<VizSurface>(`/runs/${id}/viz/surface`);
   },
 
-  getVizSlice(id: string, axis: SliceAxis): Promise<VizSlice> {
-    return getJson<VizSlice>(`/runs/${id}/viz/slice?axis=${axis}`);
+  getVizSlice(id: string, axis: SliceAxis, pos?: number): Promise<VizSlice> {
+    const q = pos !== undefined ? `&pos=${pos}` : "";
+    return getJson<VizSlice>(`/runs/${id}/viz/slice?axis=${axis}${q}`);
+  },
+
+  getVizStreamlines(id: string): Promise<VizStreamlines> {
+    return getJson<VizStreamlines>(`/runs/${id}/viz/streamlines`);
   },
 
   async deleteRun(id: string): Promise<void> {
