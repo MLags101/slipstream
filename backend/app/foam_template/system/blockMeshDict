@@ -1,0 +1,65 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      blockMeshDict;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+scale   1;
+
+vertices
+(
+    (${dx0} ${dy0} ${dz0})
+    (${dx1} ${dy0} ${dz0})
+    (${dx1} ${dy1} ${dz0})
+    (${dx0} ${dy1} ${dz0})
+    (${dx0} ${dy0} ${dz1})
+    (${dx1} ${dy0} ${dz1})
+    (${dx1} ${dy1} ${dz1})
+    (${dx0} ${dy1} ${dz1})
+);
+
+blocks
+(
+    hex (0 1 2 3 4 5 6 7) (${nx} ${ny} ${nz}) simpleGrading (1 1 1)
+);
+
+edges
+(
+);
+
+boundary
+(
+    inlet
+    {
+        type patch;
+        faces
+        (
+            (0 4 7 3)
+        );
+    }
+    outlet
+    {
+        type patch;
+        faces
+        (
+            (1 2 6 5)
+        );
+    }
+    walls
+    {
+        type patch;
+        faces
+        (
+            (0 3 2 1)
+            (4 5 6 7)
+            (0 1 5 4)
+            (3 7 6 2)
+        );
+    }
+);
+
+// ************************************************************************* //
