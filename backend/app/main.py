@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import time
 import uuid
@@ -53,14 +54,38 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     cfg.setdefault("rho", 1.225)
     cfg.setdefault("nu", 1.5e-5)
 
+    yaw_sweep = cfg.pop("yaw_sweep", None)
+    if yaw_sweep is not None:
+        if (not isinstance(yaw_sweep, list) or not (2 <= len(yaw_sweep) <= 8)
+                or not all(isinstance(a, (int, float)) and not isinstance(a, bool)
+                           and math.isfinite(a) for a in yaw_sweep)):
+            raise HTTPException(
+                422, "yaw_sweep must be a list of 2-8 finite numbers (degrees)")
+
+    data = await stl.read()
+    if len(data) < 84:
+        raise HTTPException(422, "uploaded file does not look like an STL")
+
+    if yaw_sweep is None:
+        return {"id": _submit_run(data, cfg)}
+
+    group_id = uuid.uuid4().hex
+    base_name = cfg["name"]
+    ids = []
+    for angle in yaw_sweep:
+        child_cfg = dict(cfg)
+        child_cfg["yaw_deg"] = float(angle)
+        child_cfg["name"] = f"{base_name} @ {angle:g}\N{DEGREE SIGN}"
+        ids.append(_submit_run(data, child_cfg, group_id=group_id))
+    return {"id": ids[0], "group_id": group_id, "ids": ids}
+
+
+def _submit_run(stl_bytes: bytes, cfg: dict, group_id: str | None = None) -> str:
+    """Create the run directory + initial state and enqueue it."""
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     rd = DATA_DIR / run_id
     rd.mkdir(parents=True)
-    data = await stl.read()
-    if len(data) < 84:
-        shutil.rmtree(rd)
-        raise HTTPException(422, "uploaded file does not look like an STL")
-    (rd / "model.stl").write_bytes(data)
+    (rd / "model.stl").write_bytes(stl_bytes)
     (rd / "config.json").write_text(json.dumps(cfg, indent=1))
 
     state = {
@@ -71,6 +96,7 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         "message": "Queued",
         "created_at": time.time(),
         "config": cfg,
+        "group_id": group_id,
         "model": None,
         "mesh_cells": None,
         "result": None,
@@ -78,7 +104,7 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         "log": None,
     }
     runner.submit(state)
-    return {"id": run_id}
+    return run_id
 
 
 @app.get("/api/runs")
@@ -87,7 +113,9 @@ def list_runs():
         {"id": s["id"], "name": s["name"], "status": s["status"],
          "progress": s["progress"], "created_at": s["created_at"],
          "wind_speed": s["config"].get("wind_speed"),
-         "quality": s["config"].get("quality")}
+         "quality": s["config"].get("quality"),
+         "group_id": s.get("group_id"),
+         "yaw_deg": s["config"].get("yaw_deg", 0)}
         for s in runner.list()
     ]
 
@@ -102,8 +130,9 @@ def get_run(run_id: str):
         "id": s["id"], "name": s["name"], "status": s["status"],
         "progress": s["progress"], "message": s["message"],
         "created_at": s["created_at"], "config": s["config"],
+        "group_id": s.get("group_id"),
         "model": model, "mesh_cells": s["mesh_cells"],
-        "result": s["result"], "error": s["error"],
+        "result": _compat_result(s["result"]), "error": s["error"],
     }
 
 
@@ -128,12 +157,52 @@ def get_history(run_id: str):
     return post.read_history(DATA_DIR / run_id / "case")
 
 
+def _compat_result(result: dict | None) -> dict | None:
+    """Backfill v2 result fields for runs solved before this feature."""
+    if not result:
+        return result
+    out = dict(result)
+    out.setdefault("drag_pressure_N", None)
+    out.setdefault("drag_viscous_N", None)
+    out.setdefault("stopped_early", False)
+    return out
+
+
 @app.get("/api/runs/{run_id}/result")
 def get_result(run_id: str):
     s = _get_state(run_id)
     if s["status"] != "done" or not s["result"]:
         raise HTTPException(404, "result not available (run not done)")
-    return s["result"]
+    return _compat_result(s["result"])
+
+
+@app.get("/api/groups/{group_id}")
+def get_group(group_id: str):
+    members = [s for s in runner.list() if s.get("group_id") == group_id]
+    if not members:
+        raise HTTPException(404, "group not found")
+    members.sort(key=lambda s: float(s["config"].get("yaw_deg") or 0))
+    first = members[0]
+    runs = []
+    for s in members:
+        result = s["result"] if s["status"] == "done" else None
+        runs.append({
+            "id": s["id"],
+            "yaw_deg": s["config"].get("yaw_deg", 0),
+            "status": s["status"],
+            "progress": s["progress"],
+            "cd": result.get("cd") if result else None,
+            "drag_N": result.get("drag_N") if result else None,
+        })
+    # Members are named "<base> @ N°"; the group carries the base name.
+    name = first["name"].rsplit(" @ ", 1)[0]
+    return {
+        "group_id": group_id,
+        "name": name,
+        "wind_speed": first["config"].get("wind_speed"),
+        "quality": first["config"].get("quality"),
+        "runs": runs,
+    }
 
 
 @app.get("/api/runs/{run_id}/stl")

@@ -25,6 +25,11 @@ export interface RunConfig {
   quality: Quality;
   rho?: number;
   nu?: number;
+  /**
+   * v2: 2-8 yaw angles (degrees). Creates one run per angle sharing a fresh
+   * group_id; `yaw_deg` is ignored when present.
+   */
+  yaw_sweep?: number[];
 }
 
 /** Item of GET /api/runs */
@@ -36,6 +41,19 @@ export interface RunSummary {
   created_at: number;
   wind_speed: number;
   quality: Quality;
+  /** v2: set when the run belongs to a yaw sweep. */
+  group_id: string | null;
+  yaw_deg: number;
+}
+
+/**
+ * POST /api/runs response. Plain runs return just `id`; a yaw sweep also
+ * carries the shared `group_id` and all member `ids` (`id` = first member).
+ */
+export interface CreateRunResponse {
+  id: string;
+  group_id?: string;
+  ids?: string[];
 }
 
 export interface ModelInfo {
@@ -61,6 +79,11 @@ export interface RunResult {
   mesh_cells: number;
   runtime_s: number;
   cd_std_last20pct: number;
+  /** v2 drag breakdown — null for runs solved before the feature. */
+  drag_pressure_N: number | null;
+  drag_viscous_N: number | null;
+  /** v2: true when the solver auto-stopped on Cd convergence. */
+  stopped_early: boolean;
 }
 
 /** GET /api/runs/{id} */
@@ -75,6 +98,28 @@ export interface RunDetail {
   mesh_cells: number | null;
   result: RunResult | null;
   error: string | null;
+  /** v2: set when the run belongs to a yaw sweep. */
+  group_id: string | null;
+}
+
+/** Member entry of GET /api/groups/{group_id} (sorted by yaw). */
+export interface GroupMember {
+  id: string;
+  yaw_deg: number;
+  status: RunStatus;
+  progress: number;
+  /** null until that member is done. */
+  cd: number | null;
+  drag_N: number | null;
+}
+
+/** GET /api/groups/{group_id} — yaw sweep summary. */
+export interface GroupDetail {
+  group_id: string;
+  name: string;
+  wind_speed: number;
+  quality: Quality;
+  runs: GroupMember[];
 }
 
 /** GET /api/runs/{id}/log?tail=N */
@@ -178,12 +223,12 @@ async function getJson<T>(path: string): Promise<T> {
 
 export const api = {
   /** POST /api/runs — multipart: `stl` file + `config` JSON string. */
-  async createRun(stl: File, config: RunConfig): Promise<{ id: string }> {
+  async createRun(stl: File, config: RunConfig): Promise<CreateRunResponse> {
     const form = new FormData();
     form.append("stl", stl, stl.name);
     form.append("config", JSON.stringify(config));
     const res = await request("/runs", { method: "POST", body: form });
-    return (await res.json()) as { id: string };
+    return (await res.json()) as CreateRunResponse;
   },
 
   listRuns(): Promise<RunSummary[]> {
@@ -192,6 +237,11 @@ export const api = {
 
   getRun(id: string): Promise<RunDetail> {
     return getJson<RunDetail>(`/runs/${id}`);
+  },
+
+  /** Yaw sweep group summary (member statuses + Cd/drag as they finish). */
+  getGroup(groupId: string): Promise<GroupDetail> {
+    return getJson<GroupDetail>(`/groups/${groupId}`);
   },
 
   getLog(id: string, tail = 200): Promise<LogTail> {

@@ -7,6 +7,10 @@ import {
   formatInt,
 } from "../lib/format";
 
+// Split-bar segment colors (match the chart palette).
+const C_PRESSURE = "#3987e5";
+const C_VISCOUS = "#199e70";
+
 /** Results summary once a run is done: hero Cd + stat grid. */
 export function ResultsPanel({ result }: { result: RunResult }) {
   const stats: { label: string; value: string }[] = [
@@ -26,6 +30,12 @@ export function ResultsPanel({ result }: { result: RunResult }) {
     },
   ];
 
+  // v2 drag breakdown — null (or absent) for runs solved before the feature.
+  const dragP = result.drag_pressure_N;
+  const dragV = result.drag_viscous_N;
+  const hasSplit = dragP != null && dragV != null && dragP + dragV > 0;
+  const pctP = hasSplit ? (dragP / (dragP + dragV)) * 100 : 0;
+
   return (
     <section className="panel results-panel">
       <div className="panel-head">Results</div>
@@ -35,6 +45,9 @@ export function ResultsPanel({ result }: { result: RunResult }) {
           <div className="hero-value mono">{formatCoeff(result.cd)}</div>
           <div className="hero-sub">
             averaged over final 20% of {formatInt(result.iterations)} iterations
+            {result.stopped_early && (
+              <span className="converged-note"> · stopped early (converged)</span>
+            )}
           </div>
         </div>
         <div className="stat-grid">
@@ -45,6 +58,33 @@ export function ResultsPanel({ result }: { result: RunResult }) {
             </div>
           ))}
         </div>
+        {hasSplit && (
+          <div className="drag-split">
+            <div className="stat-label">Drag breakdown — pressure vs viscous</div>
+            <div
+              className="drag-split-bar"
+              title={`pressure ${formatForce(dragP)} / viscous ${formatForce(dragV)}`}
+            >
+              <div
+                className="drag-split-pressure"
+                style={{ width: `${pctP}%` }}
+              />
+              <div className="drag-split-viscous" />
+            </div>
+            <div className="drag-split-legend">
+              <span className="legend-item">
+                <span className="legend-swatch" style={{ background: C_PRESSURE }} />
+                pressure <span className="mono">{formatForce(dragP)}</span> ·{" "}
+                {pctP.toFixed(0)}%
+              </span>
+              <span className="legend-item">
+                <span className="legend-swatch" style={{ background: C_VISCOUS }} />
+                viscous <span className="mono">{formatForce(dragV)}</span> ·{" "}
+                {(100 - pctP).toFixed(0)}%
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -153,6 +154,41 @@ class Runner:
         except OSError:
             return "(no log)"
 
+    # --------------------------------------------------------- auto-stop
+
+    # Convergence: std(Cd) over the trailing AUTOSTOP_WINDOW iterations below
+    # max(AUTOSTOP_ABS_TOL, AUTOSTOP_REL_TOL * |mean Cd|), never before 40% of
+    # the iteration budget nor with fewer than AUTOSTOP_WINDOW samples.
+    AUTOSTOP_WINDOW = 60
+    AUTOSTOP_ABS_TOL = 0.002
+    AUTOSTOP_REL_TOL = 0.005
+    AUTOSTOP_MIN_FRAC = 0.4
+
+    @classmethod
+    def _converged(cls, cd: list[float], it: int, iterations: int) -> bool:
+        if it < cls.AUTOSTOP_MIN_FRAC * iterations or len(cd) < cls.AUTOSTOP_WINDOW:
+            return False
+        tail = cd[-cls.AUTOSTOP_WINDOW:]
+        mean = sum(tail) / len(tail)
+        std = (sum((x - mean) ** 2 for x in tail) / len(tail)) ** 0.5
+        return std < max(cls.AUTOSTOP_ABS_TOL, cls.AUTOSTOP_REL_TOL * abs(mean))
+
+    @staticmethod
+    def _request_stop(case: Path) -> bool:
+        """Flip stopAt -> writeNow in the (runTimeModifiable) case controlDict
+        so the solver writes the current time and exits cleanly."""
+        path = case / "system" / "controlDict"
+        try:
+            text = path.read_text()
+        except OSError:
+            return False
+        new = re.sub(r"^(\s*stopAt\s+)\w+\s*;", r"\1writeNow;", text,
+                     count=1, flags=re.MULTILINE)
+        if new == text and "writeNow" not in text:
+            return False
+        path.write_text(new)
+        return True
+
     def _execute(self, run_id: str) -> None:
         t0 = time.time()
         rd = self.run_dir(run_id)
@@ -162,7 +198,8 @@ class Runner:
 
         # ---- preparing (0 - 0.1) ------------------------------------------
         self.update(run_id, status="preparing", progress=0.02,
-                    message="Processing STL geometry", error=None)
+                    message="Processing STL geometry", error=None,
+                    stopped_early=False)
         tri_dir = case / "constant" / "triSurface"
 
         model = geometry.prepare_stl(
@@ -212,14 +249,21 @@ class Runner:
         self.update(run_id, message=f"Running simpleFoam on {n} cores "
                                     f"(0/{iterations} iterations)")
 
+        stop = {"requested": False}
+
         def solve_progress():
             hist = post.read_history(case)
             if hist["iters"]:
                 it = int(hist["iters"][-1])
                 frac = min(1.0, it / iterations)
+                suffix = " - converged, stopping early" if stop["requested"] else ""
                 self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),
                             message=f"Running simpleFoam on {n} cores "
-                                    f"({it}/{iterations} iterations)")
+                                    f"({it}/{iterations} iterations){suffix}")
+                if not stop["requested"] and self._converged(hist["cd"], it, iterations):
+                    stop["requested"] = self._request_stop(case)
+                    if stop["requested"]:
+                        self.update(run_id, stopped_early=True)
 
         # NOTE: --oversubscribe makes Open MPI yield-when-idle, which was measured
         # to slow the solve ~50x on this machine. 6 ranks on 8 cores fit without it;
@@ -250,6 +294,10 @@ class Runner:
 
         self.update(run_id, progress=0.98, message="Computing final coefficients")
         result = post.compute_result(case, config, model, mesh_cells,
-                                     runtime_s=time.time() - t0)
+                                     runtime_s=time.time() - t0,
+                                     stopped_early=stop["requested"])
+        done_msg = f"Done - Cd = {result['cd']:.3f}"
+        if result["stopped_early"]:
+            done_msg += f" (converged early at {result['iterations']} iterations)"
         self.update(run_id, status="done", progress=1.0, result=result,
-                    message=f"Done - Cd = {result['cd']:.3f}")
+                    message=done_msg)

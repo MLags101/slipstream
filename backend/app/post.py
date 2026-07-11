@@ -7,12 +7,21 @@ from pathlib import Path
 import numpy as np
 
 # --------------------------------------------------------------------------
-# .dat parsing (forceCoeffs coefficient.dat, solverInfo.dat)
+# .dat parsing (forceCoeffs coefficient.dat, solverInfo.dat, forces force.dat)
 # --------------------------------------------------------------------------
+
+# A parenthesised group whose contents include whitespace = a vector column.
+_VEC_GROUP_RE = re.compile(r"\(([^()]*\s[^()]*)\)")
+
 
 def parse_dat(path: str | Path) -> dict[str, np.ndarray]:
     """Parse an OpenFOAM function-object .dat file. Header lines start with '#';
-    the last header line holds column names. Returns {column_name: array}."""
+    the last header line holds column names. Vector columns (values wrapped in
+    parentheses, e.g. the forces FO's force.dat) are flattened: parentheses are
+    stripped from header and data lines so each component becomes its own
+    scalar column. Scalar names like "Cd(f)" keep their parentheses; only
+    parenthesised groups containing whitespace are flattened. Returns
+    {column_name: array}."""
     path = Path(path)
     if not path.exists():
         return {}
@@ -25,11 +34,11 @@ def parse_dat(path: str | Path) -> dict[str, np.ndarray]:
                 if not line:
                     continue
                 if line.startswith("#"):
-                    cols = line.lstrip("#").split()
+                    cols = _VEC_GROUP_RE.sub(r" \1 ", line.lstrip("#")).split()
                     if cols:
                         header = cols
                     continue
-                parts = line.split()
+                parts = line.replace("(", " ").replace(")", " ").split()
                 if not header or len(parts) != len(header):
                     # tolerate partial last line while solver is writing
                     continue
@@ -83,8 +92,22 @@ def _tolist(a: np.ndarray) -> list:
     return [float(x) for x in np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)]
 
 
+def drag_breakdown(case_dir: str | Path) -> tuple[float | None, float | None]:
+    """Pressure/viscous drag split (N) from the forces FO's force.dat, averaged
+    over the last 20% of samples (same window policy as the coefficients).
+    Returns (None, None) for cases without a forces1 function object."""
+    forces = parse_dat(_latest_dat(Path(case_dir), "forces1", "force.dat"))
+    if not forces or "pressure_x" not in forces or "viscous_x" not in forces:
+        return None, None
+    m = len(forces["pressure_x"])
+    win = slice(m - max(1, int(round(m * 0.2))), m)
+    return (float(np.mean(forces["pressure_x"][win])),
+            float(np.mean(forces["viscous_x"][win])))
+
+
 def compute_result(case_dir: str | Path, config: dict, model: dict,
-                   mesh_cells: int | None, runtime_s: float) -> dict:
+                   mesh_cells: int | None, runtime_s: float,
+                   stopped_early: bool = False) -> dict:
     """Averages over last 20% of iterations -> /result payload."""
     coeffs = parse_dat(_latest_dat(Path(case_dir), "forceCoeffs1", "coefficient.dat"))
     if not coeffs or "Cd" not in coeffs:
@@ -101,14 +124,17 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     u = float(config["wind_speed"])
     area = float(model["frontal_area_m2"])
     qdyn = 0.5 * rho * u * u * area
+    drag_pressure, drag_viscous = drag_breakdown(case_dir)
     return {
         "cd": cd, "cl": cl, "cs": cs,
         "drag_N": cd * qdyn, "lift_N": cl * qdyn, "side_N": cs * qdyn,
+        "drag_pressure_N": drag_pressure, "drag_viscous_N": drag_viscous,
         "frontal_area_m2": area, "wind_speed": u, "rho": rho,
         "iterations": int(coeffs["Time"][-1]),
         "mesh_cells": mesh_cells,
         "runtime_s": round(runtime_s, 1),
         "cd_std_last20pct": float(np.std(coeffs["Cd"][win])),
+        "stopped_early": bool(stopped_early),
     }
 
 

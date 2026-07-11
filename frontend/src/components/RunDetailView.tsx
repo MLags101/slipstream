@@ -8,11 +8,14 @@ import { LogPanel } from "./LogPanel";
 import { LineChart } from "./LineChart";
 import { ResultsPanel } from "./ResultsPanel";
 import { ResultViewer } from "./ResultViewer";
+import { SweepPanel } from "./SweepPanel";
 
 interface Props {
   id: string;
   onDelete: (id: string) => void;
   onUnreachable: (down: boolean) => void;
+  /** Navigate to a sibling run (yaw sweep member list). */
+  onSelectRun: (id: string) => void;
 }
 
 // Chart series colors — validated 4-slot dark categorical palette.
@@ -21,7 +24,7 @@ const C_AQUA = "#199e70";
 const C_YELLOW = "#c98500";
 const C_VIOLET = "#9085e9";
 
-export function RunDetailView({ id, onDelete, onUnreachable }: Props) {
+export function RunDetailView({ id, onDelete, onUnreachable, onSelectRun }: Props) {
   const fetchRun = useCallback(() => api.getRun(id), [id]);
 
   const [snapshot, setSnapshot] = useState<RunDetail | null>(null);
@@ -121,6 +124,14 @@ export function RunDetailView({ id, onDelete, onUnreachable }: Props) {
       )}
 
       <Stepper status={run.status} progress={run.progress} message={run.message} />
+
+      {run.group_id && (
+        <SweepPanel
+          groupId={run.group_id}
+          activeRunId={id}
+          onSelectRun={onSelectRun}
+        />
+      )}
 
       {run.status === "done" && run.result && (
         <>

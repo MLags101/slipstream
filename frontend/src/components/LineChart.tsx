@@ -22,6 +22,8 @@ interface Props {
   height?: number;
   xLabel?: string;
   formatY?: (v: number) => string;
+  /** Draw a dot at every data point (for sparse series like sweeps). */
+  markers?: boolean;
 }
 
 const MARGIN = { top: 12, right: 14, bottom: 30, left: 52 };
@@ -33,6 +35,7 @@ export function LineChart({
   height = 220,
   xLabel = "iteration",
   formatY,
+  markers = false,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -238,6 +241,19 @@ export function LineChart({
               strokeLinecap="round"
             />
           ))}
+          {/* point markers */}
+          {markers &&
+            visible.map((s) =>
+              s.pts.map((p, i) => (
+                <circle
+                  key={`${s.name}-${i}`}
+                  cx={sx(p.x)}
+                  cy={sy(p.y)}
+                  r={3}
+                  fill={s.color}
+                />
+              )),
+            )}
           {/* crosshair */}
           {hover && (
             <line

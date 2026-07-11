@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import {
@@ -13,6 +13,7 @@ import {
 } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
 import { toMeshArrays, UNIT_TO_METERS } from "../lib/geometry";
+import { commonRange, sweepPositions } from "../lib/sweep";
 import {
   divergingBWR,
   viridis,
@@ -42,6 +43,18 @@ const AXIS_LABEL: Record<SliceAxis, string> = {
   y: "side (y)",
   z: "top (z)",
 };
+
+const AXIS_IDX: Record<SliceAxis, number> = { x: 0, y: 1, z: 2 };
+
+/** Slice sweep animation: frame count and playback speed (~2.5 fps). */
+const SWEEP_COUNT = 12;
+const SWEEP_FRAME_MS = 400;
+
+/** Pre-fetched sweep frames for one axis (raw payloads, cached per run). */
+interface SweepFrames {
+  positions: number[];
+  frames: VizSlice[];
+}
 
 /** Camera orientation locked normal to each slice plane (2D-style view). */
 const SLICE_VIEW: Record<SliceAxis, { dir: [number, number, number]; up: [number, number, number] }> = {
@@ -123,9 +136,28 @@ export function ResultViewer({ runId, config, model }: Props) {
     surface?: VizSurface;
     streamlines?: VizStreamlines;
     slices: Record<string, VizSlice>;
-  }>({ slices: {} });
+    sweeps: Partial<Record<SliceAxis, SweepFrames>>;
+  }>({ slices: {}, sweeps: {} });
 
   const sliceKey = `${sliceAxis}@${slicePos ?? "center"}`;
+
+  // --- slice sweep animation state ---------------------------------------
+  const [sweepPhase, setSweepPhase] = useState<"idle" | "sampling" | "playing">(
+    "idle",
+  );
+  const [sweepSample, setSweepSample] = useState(0); // k while sampling k/N
+  const [sweepFrame, setSweepFrame] = useState(0); // current playback frame
+  // Fixed |U| range across all frames (drives recoloring + colorbar).
+  const [sweepRange, setSweepRange] = useState<[number, number] | null>(null);
+  const sweepTokenRef = useRef<{ cancelled: boolean } | null>(null);
+  const sweepPlayRef = useRef<{
+    frames: VizSlice[];
+    positions: number[];
+    colors: Float32Array[];
+    mesh: THREE.Mesh;
+  } | null>(null);
+  const sweepFrameRef = useRef(0);
+  const sweeping = sweepPhase !== "idle";
 
   useEffect(() => {
     const host = hostRef.current;
@@ -181,6 +213,10 @@ export function ResultViewer({ runId, config, model }: Props) {
   };
 
   useEffect(() => {
+    // While the sweep animation owns the slice content, skip the static
+    // loader entirely; flipping `sweeping` back to false re-runs this effect
+    // and restores the previously selected static slice (from cache).
+    if (mode === "slice" && sweeping) return;
     let cancelled = false;
     const cache = cacheRef.current;
 
@@ -335,17 +371,141 @@ export function ResultViewer({ runId, config, model }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg]);
+  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, sweeping]);
+
+  /**
+   * Stop the sweep: cancel any in-flight sampling and drop back to the
+   * static slice (the main effect reloads it from cache — no camera snap,
+   * since the axis-locked view is unchanged).
+   */
+  const stopSweep = useCallback(() => {
+    if (sweepTokenRef.current) sweepTokenRef.current.cancelled = true;
+    sweepPlayRef.current = null;
+    setSweepPhase("idle");
+    setSweepRange(null);
+    setSweepSample(0);
+  }, []);
+
+  /**
+   * Play the slice sweep: sequentially fetch SWEEP_COUNT planes spanning the
+   * model bbox ±20% along the active axis (each on-demand slice takes ~2-3s
+   * server-side), recolor all frames against their common |U| range, then
+   * loop. Frames are cached per axis so replays start instantly.
+   */
+  const startSweep = async () => {
+    if (sweeping || mode !== "slice" || !model) return;
+    const axis = sliceAxis;
+    const token = { cancelled: false };
+    sweepTokenRef.current = token;
+    setSweepPhase("sampling");
+    setSweepSample(0);
+    setLoadError(null);
+    try {
+      const cache = cacheRef.current;
+      let sweep = cache.sweeps[axis];
+      if (!sweep) {
+        const ai = AXIS_IDX[axis];
+        const positions = sweepPositions(
+          model.bbox_m[0][ai],
+          model.bbox_m[1][ai],
+          SWEEP_COUNT,
+        );
+        const frames: VizSlice[] = [];
+        for (let i = 0; i < positions.length; i++) {
+          setSweepSample(i + 1);
+          const f = await api.getVizSlice(runId, axis, positions[i]);
+          if (token.cancelled) return;
+          frames.push(f);
+        }
+        sweep = { positions, frames };
+        cache.sweeps[axis] = sweep;
+      }
+      // Gray model context (normally already cached by the static slice).
+      if (!cache.surface) cache.surface = await api.getVizSurface(runId);
+      if (token.cancelled) return;
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+
+      // Recolor every frame against the common range so the animation reads
+      // on one fixed scale.
+      const range = commonRange(sweep.frames.map((f) => f.ranges.u_mag));
+      const norm = linearNorm(range[0], range[1]);
+      const colors = sweep.frames.map((f) =>
+        fieldToVertexColors(f.fields.u_mag, viridis, norm),
+      );
+
+      const g0 = vizToGeometry(sweep.frames[0].positions, sweep.frames[0].indices);
+      g0.setAttribute("color", new THREE.BufferAttribute(colors[0], 3));
+      const sliceMesh = new THREE.Mesh(
+        g0,
+        new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }),
+      );
+      const group = new THREE.Group();
+      group.add(sliceMesh);
+      group.add(grayContext(cache.surface, false));
+      // Content swap only — never re-frame or re-snap the locked slice camera.
+      viewer.setContent(group);
+
+      sweepPlayRef.current = {
+        frames: sweep.frames,
+        positions: sweep.positions,
+        colors,
+        mesh: sliceMesh,
+      };
+      sweepFrameRef.current = 0;
+      setSweepFrame(0);
+      setSweepRange(range);
+      setSweepPhase("playing");
+    } catch (e) {
+      if (token.cancelled) return;
+      setSweepPhase("idle");
+      setLoadError(`Sweep failed: ${(e as Error).message}`);
+    }
+  };
+
+  // Playback loop: step the plane every SWEEP_FRAME_MS, swapping the slice
+  // mesh geometry in place (camera untouched).
+  useEffect(() => {
+    if (sweepPhase !== "playing") return;
+    const t = setInterval(() => {
+      const play = sweepPlayRef.current;
+      if (!play) return;
+      sweepFrameRef.current = (sweepFrameRef.current + 1) % play.frames.length;
+      const i = sweepFrameRef.current;
+      const f = play.frames[i];
+      const g = vizToGeometry(f.positions, f.indices);
+      g.setAttribute("color", new THREE.BufferAttribute(play.colors[i], 3));
+      play.mesh.geometry.dispose();
+      play.mesh.geometry = g;
+      setSweepFrame(i);
+    }, SWEEP_FRAME_MS);
+    return () => clearInterval(t);
+  }, [sweepPhase]);
+
+  // Any axis/mode/run change (or unmount) aborts sampling and stops playback.
+  useEffect(() => {
+    return () => stopSweep();
+  }, [mode, sliceAxis, runId, stopSweep]);
 
   const surface = cacheRef.current.surface;
   const slice = cacheRef.current.slices[sliceKey];
   const streamlines = cacheRef.current.streamlines;
+
+  // Sweep position readout: server-echoed pos (clamped) falls back to the
+  // requested position.
+  const play = sweepPlayRef.current;
+  const sweepPosM = play
+    ? (play.frames[sweepFrame]?.pos ?? play.positions[sweepFrame] ?? 0)
+    : 0;
+  const sweepReadout = play
+    ? `sweep ${sliceAxis} = ${Math.round(sweepPosM * 1000)} mm · ${sweepFrame + 1}/${play.frames.length}`
+    : "";
   const cpMax = surface
     ? Math.max(Math.abs(surface.ranges.cp[0]), Math.abs(surface.ranges.cp[1]))
     : 0;
 
   // Slice position bounds (mm) along the active axis, from the domain bbox.
-  const axisIdx = { x: 0, y: 1, z: 2 }[sliceAxis];
+  const axisIdx = AXIS_IDX[sliceAxis];
   const domain = model?.domain_bbox_m;
   const posMin = domain ? Math.round(domain[0][axisIdx] * 1000) : undefined;
   const posMax = domain ? Math.round(domain[1][axisIdx] * 1000) : undefined;
@@ -402,6 +562,7 @@ export function ResultViewer({ runId, config, model }: Props) {
                 step="any"
                 min={posMin}
                 max={posMax}
+                disabled={sweeping}
                 onChange={(e) => setPosInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && applySlicePos()}
                 title={
@@ -411,8 +572,26 @@ export function ResultViewer({ runId, config, model }: Props) {
                 }
               />
               <span className="slice-pos-unit">mm</span>
-              <button className="seg" onClick={applySlicePos}>
+              <button className="seg" onClick={applySlicePos} disabled={sweeping}>
                 Set
+              </button>
+            </div>
+            <div className="segmented">
+              <button
+                className="seg"
+                onClick={() => void startSweep()}
+                disabled={sweeping || !model}
+                title={`Animate ${SWEEP_COUNT} planes across the model along ${sliceAxis}`}
+              >
+                ▶ Sweep
+              </button>
+              <button
+                className="seg"
+                onClick={stopSweep}
+                disabled={!sweeping}
+                title="Stop and restore the selected slice"
+              >
+                ■ Stop
               </button>
             </div>
           </>
@@ -429,7 +608,14 @@ export function ResultViewer({ runId, config, model }: Props) {
             ))}
           </div>
         )}
-        {loading && (
+        {sweeping && (
+          <div className="viewer-status">
+            {sweepPhase === "sampling"
+              ? `sampling ${sweepSample}/${SWEEP_COUNT}…`
+              : sweepReadout}
+          </div>
+        )}
+        {!sweeping && loading && (
           <div className="viewer-status">
             {mode === "slice" && slicePos !== undefined
               ? "sampling plane…"
@@ -448,7 +634,15 @@ export function ResultViewer({ runId, config, model }: Props) {
             showZero
           />
         )}
-        {mode === "slice" && slice && (
+        {mode === "slice" && sweepRange && (
+          <Colorbar
+            colormap={viridis}
+            min={sweepRange[0]}
+            max={sweepRange[1]}
+            label="|U| m/s"
+          />
+        )}
+        {mode === "slice" && !sweepRange && slice && (
           <Colorbar
             colormap={viridis}
             min={slice.ranges.u_mag[0]}

@@ -36,7 +36,7 @@ timeFormat      general;
 
 timePrecision   6;
 
-runTimeModifiable false;
+runTimeModifiable true;
 
 functions
 {
@@ -58,6 +58,20 @@ functions
         dragDir         (1 0 0);
         liftDir         (0 0 1);
         pitchAxis       (0 1 0);
+    }
+
+    forces1
+    {
+        type            forces;
+        libs            (forces);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             no;
+
+        patches         (model);
+        rho             rhoInf;
+        rhoInf          ${rho};
+        CofR            (${cx} ${cy} ${cz});
     }
 
     solverInfo1

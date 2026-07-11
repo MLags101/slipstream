@@ -4,13 +4,29 @@ import { usePoll } from "./hooks/usePoll";
 import { Sidebar } from "./components/Sidebar";
 import { NewRunView } from "./components/NewRunView";
 import { RunDetailView } from "./components/RunDetailView";
+import { CompareView } from "./components/CompareView";
 
-type Route = { view: "new" } | { view: "run"; id: string };
+type Route = { view: "new" } | { view: "run"; id: string } | { view: "compare" };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ view: "new" });
   const [refresh, setRefresh] = useState(0);
   const [detailUnreachable, setDetailUnreachable] = useState(false);
+
+  // Run comparison: up to two done-run ids picked in the sidebar. Selecting
+  // the second opens the compare view; clearing (or dropping below two)
+  // leaves it.
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const toggleCompare = useCallback((id: string) => {
+    setCompareIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id].slice(-2),
+    );
+  }, []);
+  const clearCompare = useCallback(() => setCompareIds([]), []);
+  useEffect(() => {
+    if (compareIds.length === 2) setRoute({ view: "compare" });
+    else setRoute((r) => (r.view === "compare" ? { view: "new" } : r));
+  }, [compareIds]);
 
   // Run history: poll every ~3s. Bumping `refresh` restarts polling so
   // create/delete show up immediately.
@@ -42,6 +58,7 @@ export default function App() {
       try {
         await api.deleteRun(id);
         setRoute((r) => (r.view === "run" && r.id === id ? { view: "new" } : r));
+        setCompareIds((prev) => prev.filter((x) => x !== id));
         setRefresh((n) => n + 1);
       } catch (e) {
         if (e instanceof ApiError && e.status === 409) {
@@ -53,6 +70,8 @@ export default function App() {
     },
     [list.data],
   );
+
+  const openRun = useCallback((id: string) => setRoute({ view: "run", id }), []);
 
   return (
     <div className="app">
@@ -67,24 +86,38 @@ export default function App() {
           runs={list.data}
           activeId={route.view === "run" ? route.id : null}
           cdById={cdById}
-          onSelect={(id) => setRoute({ view: "run", id })}
+          compareIds={compareIds}
+          onSelect={openRun}
           onNew={() => setRoute({ view: "new" })}
           onDelete={handleDelete}
+          onToggleCompare={toggleCompare}
+          onOpenCompare={() => setRoute({ view: "compare" })}
+          onClearCompare={clearCompare}
         />
         <main className="main">
-          {route.view === "new" ? (
+          {route.view === "new" && (
             <NewRunView
               onCreated={(id) => {
                 setRefresh((n) => n + 1);
                 setRoute({ view: "run", id });
               }}
             />
-          ) : (
+          )}
+          {route.view === "compare" && compareIds.length === 2 && (
+            <CompareView
+              aId={compareIds[0]}
+              bId={compareIds[1]}
+              onExit={clearCompare}
+              onOpenRun={openRun}
+            />
+          )}
+          {route.view === "run" && (
             <RunDetailView
               key={route.id}
               id={route.id}
               onDelete={handleDelete}
               onUnreachable={setDetailUnreachable}
+              onSelectRun={openRun}
             />
           )}
         </main>

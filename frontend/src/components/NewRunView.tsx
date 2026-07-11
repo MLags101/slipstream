@@ -27,6 +27,8 @@ export function NewRunView({ onCreated }: Props) {
   const [unit, setUnit] = useState<StlUnit>("mm");
   const [windSpeed, setWindSpeed] = useState("15");
   const [yawDeg, setYawDeg] = useState("0");
+  const [sweepEnabled, setSweepEnabled] = useState(false);
+  const [sweepAngles, setSweepAngles] = useState("0, 15, 30, 45");
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -97,25 +99,49 @@ export function NewRunView({ onCreated }: Props) {
     e.preventDefault();
     if (!file || submitting) return;
     const ws = parseFloat(windSpeed);
-    const yaw = parseFloat(yawDeg);
     if (!Number.isFinite(ws) || ws <= 0) {
       setSubmitError("Wind speed must be a positive number");
       return;
     }
-    if (!Number.isFinite(yaw)) {
-      setSubmitError("Yaw must be a number");
-      return;
+    let yaw = 0;
+    let yawSweep: number[] | undefined;
+    if (sweepEnabled) {
+      const angles = sweepAngles
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s !== "")
+        .map((s) => Number(s));
+      if (
+        angles.length < 2 ||
+        angles.length > 8 ||
+        angles.some((a) => !Number.isFinite(a))
+      ) {
+        setSubmitError(
+          "Yaw sweep needs 2–8 comma-separated angles, e.g. 0, 15, 30, 45",
+        );
+        return;
+      }
+      yawSweep = angles;
+    } else {
+      yaw = parseFloat(yawDeg);
+      if (!Number.isFinite(yaw)) {
+        setSubmitError("Yaw must be a number");
+        return;
+      }
     }
     const config: RunConfig = {
       name: name.trim() || nameFromFilename(file.name),
       unit,
       wind_speed: ws,
+      // Ignored by the backend when yaw_sweep is present.
       yaw_deg: yaw,
       quality,
+      ...(yawSweep ? { yaw_sweep: yawSweep } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
     try {
+      // For sweeps the response `id` is the first member run.
       const { id } = await api.createRun(file, config);
       onCreated(id);
     } catch (err) {
@@ -222,18 +248,42 @@ export function NewRunView({ onCreated }: Props) {
               />
             </label>
             <label className="field">
-              <span className="field-label">Yaw (deg)</span>
-              <input
-                type="number"
-                value={yawDeg}
-                onChange={(e) => setYawDeg(e.target.value)}
-                min={-180}
-                max={180}
-                step="any"
-                disabled={!file}
-              />
+              <span className="field-label">
+                {sweepEnabled ? "Yaw angles (deg)" : "Yaw (deg)"}
+              </span>
+              {sweepEnabled ? (
+                <input
+                  type="text"
+                  className="mono"
+                  value={sweepAngles}
+                  onChange={(e) => setSweepAngles(e.target.value)}
+                  placeholder="0, 15, 30, 45"
+                  spellCheck={false}
+                  disabled={!file}
+                  title="2–8 comma-separated yaw angles in degrees"
+                />
+              ) : (
+                <input
+                  type="number"
+                  value={yawDeg}
+                  onChange={(e) => setYawDeg(e.target.value)}
+                  min={-180}
+                  max={180}
+                  step="any"
+                  disabled={!file}
+                />
+              )}
             </label>
           </div>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={sweepEnabled}
+              onChange={(e) => setSweepEnabled(e.target.checked)}
+              disabled={!file}
+            />
+            <span>Yaw sweep — queue one run per angle</span>
+          </label>
           <label className="field">
             <span className="field-label">Mesh quality</span>
             <select
@@ -255,7 +305,7 @@ export function NewRunView({ onCreated }: Props) {
           className="btn btn-primary btn-block btn-run"
           disabled={!file || submitting}
         >
-          {submitting ? "Starting…" : "Run analysis"}
+          {submitting ? "Starting…" : sweepEnabled ? "Run yaw sweep" : "Run analysis"}
         </button>
         <div className="config-note">
           Runs execute one at a time — a new run queues behind any active one.
