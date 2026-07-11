@@ -77,7 +77,7 @@ def compute_params(model: dict, config: dict) -> dict:
         "U0": fmt(U0), "rho": fmt(rho), "nu": fmt(nu),
         "k0": fmt(k0), "omega0": fmt(omega0),
         "endTime": str(q["iterations"]),
-        "aref": fmt(area), "lref": fmt(L),
+        "aref": fmt(model["frontal_area_m2"]), "lref": fmt(L),
         "cx": fmt(cx), "cy": fmt(cy), "cz": fmt(cz),
         "dx0": fmt(dx0), "dx1": fmt(dx1),
         "dy0": fmt(dy0), "dy1": fmt(dy1),
