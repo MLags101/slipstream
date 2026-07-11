@@ -43,6 +43,13 @@ const AXIS_LABEL: Record<SliceAxis, string> = {
   z: "top (z)",
 };
 
+/** Camera orientation locked normal to each slice plane (2D-style view). */
+const SLICE_VIEW: Record<SliceAxis, { dir: [number, number, number]; up: [number, number, number] }> = {
+  x: { dir: [-1, 0, 0], up: [0, 0, 1] },
+  y: { dir: [0, -1, 0], up: [0, 0, 1] },
+  z: { dir: [0, 0, 1], up: [0, 1, 0] },
+};
+
 /** Build a BufferGeometry from the contract's flat-array viz payload. */
 function vizToGeometry(positions: number[], indices: number[]): THREE.BufferGeometry {
   const arrays = toMeshArrays(positions, indices);
@@ -131,6 +138,35 @@ export function ResultViewer({ runId, config, model }: Props) {
       viewerRef.current = null;
     };
   }, [runId]);
+
+  const sliceViewRef = useRef<SliceAxis | null>(null);
+
+  // Slice mode is a locked, plane-normal view: no orbiting (pan/zoom stay on).
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.controls.enableRotate = mode !== "slice";
+    if (mode !== "slice") {
+      viewer.camera.up.set(0, 0, 1);
+      sliceViewRef.current = null;
+    }
+  }, [mode, runId]);
+
+  const snapSliceView = (sphere: THREE.Sphere) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const { dir, up } = SLICE_VIEW[sliceAxis];
+    const r = Math.max(sphere.radius, 1e-6);
+    viewer.camera.up.set(...up);
+    viewer.camera.position
+      .copy(sphere.center)
+      .addScaledVector(new THREE.Vector3(...dir), r * 3.2);
+    viewer.camera.near = r / 100;
+    viewer.camera.far = r * 300;
+    viewer.camera.updateProjectionMatrix();
+    viewer.controls.target.copy(sphere.center);
+    viewer.controls.update();
+  };
 
   const setView = (dir: [number, number, number]) => {
     const viewer = viewerRef.current;
@@ -271,8 +307,17 @@ export function ResultViewer({ runId, config, model }: Props) {
           const group = new THREE.Group();
           group.add(sliceMesh);
           group.add(contextMesh);
-          frameOnce(viewer, contextMesh);
+          // Slice mode manages its own camera: snap normal to the plane when
+          // the axis (or mode) changes; keep zoom when only the position moves.
+          const box = new THREE.Box3().setFromObject(contextMesh);
+          const sphere = box.getBoundingSphere(new THREE.Sphere());
+          sphereRef.current = sphere;
+          framedRef.current = true;
           viewer.setContent(group);
+          if (sliceViewRef.current !== sliceAxis) {
+            snapSliceView(sphere);
+            sliceViewRef.current = sliceAxis;
+          }
         }
         if (!cancelled) setLoading(false);
       } catch (e) {
@@ -375,13 +420,15 @@ export function ResultViewer({ runId, config, model }: Props) {
       </div>
       <div className="viewer-body">
         <div className="viewer-canvas" ref={hostRef} />
-        <div className="view-presets">
-          {VIEWS.map((v) => (
-            <button key={v.label} className="seg" onClick={() => setView(v.dir)}>
-              {v.label}
-            </button>
-          ))}
-        </div>
+        {mode !== "slice" && (
+          <div className="view-presets">
+            {VIEWS.map((v) => (
+              <button key={v.label} className="seg" onClick={() => setView(v.dir)}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+        )}
         {loading && (
           <div className="viewer-status">
             {mode === "slice" && slicePos !== undefined
