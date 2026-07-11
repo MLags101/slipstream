@@ -95,6 +95,47 @@ Streamline tracks seeded on a 7×7 rake upstream of the model (on-demand, cached
 ### DELETE /api/runs/{id}
 Deletes run dir. 409 if currently executing.
 
+## v2 additions (sweeps, drag breakdown, auto-stop)
+
+### Yaw sweeps
+`POST /api/runs` accepts optional `"yaw_sweep": [0, 15, 30, 45]` (2–8 angles, degrees;
+`yaw_deg` is ignored when present). Creates one run per angle sharing a fresh `group_id`;
+each child run is a normal run with its `yaw_deg` set and `" @ N°"` appended to the name.
+Response becomes `{"id": <first run id>, "group_id": "...", "ids": [...]}` (plain runs keep
+returning just `{"id"}` — no group fields). Runs execute sequentially via the existing FIFO.
+
+- `GET /api/runs` items gain `"group_id": str|null` and `"yaw_deg": number`.
+- Run detail gains `"group_id": str|null`.
+- `GET /api/groups/{group_id}` →
+  `{"group_id","name","wind_speed","quality","runs":[{"id","yaw_deg","status","progress",
+  "cd","drag_N"}]}` sorted by yaw; `cd`/`drag_N` null until that member is done. 404 unknown.
+
+### Drag breakdown
+`/result` gains `"drag_pressure_N"` and `"drag_viscous_N"` (pressure vs viscous drag split
+from a `forces` function object, averaged over the same last-20% window; `null` for runs
+solved before this feature).
+
+### Auto-stop on convergence
+The solver halts early once std(Cd) over the trailing 60 iterations <
+max(0.002, 0.5% · |mean Cd|), after at least 40% of the iteration budget (the case
+controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
+`/result` gains `"stopped_early": bool`, and `iterations` reflects the actual count.
+
+### Frontend v2
+- **Run comparison**: pick any two runs (e.g. per-run "compare" affordance in the sidebar);
+  side-by-side stat tiles (Cd, Cl, drag N, frontal area, cells, runtime) with explicit
+  deltas, plus both Cd convergence histories overlaid on one chart.
+- **Sweep results**: when a run belongs to a group, its detail view shows a sweep panel
+  (poll `/api/groups/{gid}`): member status list and — as members finish — a Cd-vs-yaw and
+  drag-vs-yaw chart with numeric table.
+- **Slice sweep animation**: in slice mode, a play control pre-fetches ~12 plane positions
+  spanning the model bbox (±20%) along the active axis (sequentially, with "sampling k/12"
+  progress), then steps through them at ~2.5 fps with the position readout updating.
+  Frames are colored against a common u_mag range for visual coherence; cached frames replay
+  instantly. Explicit play/stop — no scrubbing-on-drag required.
+- Results panel shows the pressure/viscous drag split when present, and an "stopped early
+  (converged)" note when `stopped_early`.
+
 ## Backend pipeline (per run)
 
 1. **preparing** — trimesh: load STL, scale to m, center, rotate −yaw about Z, save binary STL
