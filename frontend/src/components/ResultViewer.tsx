@@ -7,6 +7,8 @@ import {
   type ModelInfo,
   type RunConfig,
   type SliceAxis,
+  type StreamDensity,
+  type StreamRegion,
   type VizSlice,
   type VizStreamlines,
   type VizSurface,
@@ -134,12 +136,17 @@ export function ResultViewer({ runId, config, model }: Props) {
   const cacheRef = useRef<{
     stl?: THREE.BufferGeometry;
     surface?: VizSurface;
-    streamlines?: VizStreamlines;
+    streamlines: Record<string, VizStreamlines>;
     slices: Record<string, VizSlice>;
     sweeps: Partial<Record<SliceAxis, SweepFrames>>;
-  }>({ slices: {}, sweeps: {} });
+  }>({ slices: {}, sweeps: {}, streamlines: {} });
 
   const sliceKey = `${sliceAxis}@${slicePos ?? "center"}`;
+
+  // Streamline seeding controls (explicit segmented buttons).
+  const [streamDensity, setStreamDensity] = useState<StreamDensity>("med");
+  const [streamRegion, setStreamRegion] = useState<StreamRegion>("full");
+  const streamKey = `${streamDensity}/${streamRegion}`;
 
   // --- slice sweep animation state ---------------------------------------
   const [sweepPhase, setSweepPhase] = useState<"idle" | "sampling" | "playing">(
@@ -253,6 +260,7 @@ export function ResultViewer({ runId, config, model }: Props) {
             g.computeBoundingBox();
             const c = g.boundingBox!.getCenter(new THREE.Vector3());
             g.translate(-c.x, -c.y, -c.z);
+            g.rotateY(((config.pitch_deg ?? 0) * Math.PI) / 180);
             g.rotateZ((-config.yaw_deg * Math.PI) / 180);
             g.computeVertexNormals();
             cache.stl = g;
@@ -295,12 +303,12 @@ export function ResultViewer({ runId, config, model }: Props) {
           viewer.setContent(group);
         } else if (mode === "streamlines") {
           const [lines, surface] = await Promise.all([
-            cache.streamlines
-              ? Promise.resolve(cache.streamlines)
-              : api.getVizStreamlines(runId),
+            cache.streamlines[streamKey]
+              ? Promise.resolve(cache.streamlines[streamKey])
+              : api.getVizStreamlines(runId, streamDensity, streamRegion),
             getSurface(),
           ]);
-          cache.streamlines = lines;
+          cache.streamlines[streamKey] = lines;
           if (cancelled) return;
 
           const segs = new THREE.LineSegments(
@@ -371,7 +379,7 @@ export function ResultViewer({ runId, config, model }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, sweeping]);
+  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, streamKey, sweeping]);
 
   /**
    * Stop the sweep: cancel any in-flight sampling and drop back to the
@@ -489,7 +497,7 @@ export function ResultViewer({ runId, config, model }: Props) {
 
   const surface = cacheRef.current.surface;
   const slice = cacheRef.current.slices[sliceKey];
-  const streamlines = cacheRef.current.streamlines;
+  const streamlines = cacheRef.current.streamlines[streamKey];
 
   // Sweep position readout: server-echoed pos (clamped) falls back to the
   // requested position.
@@ -593,6 +601,32 @@ export function ResultViewer({ runId, config, model }: Props) {
               >
                 ■ Stop
               </button>
+            </div>
+          </>
+        )}
+        {mode === "streamlines" && (
+          <>
+            <div className="segmented" title="seed grid density">
+              {(["low", "med", "high"] as StreamDensity[]).map((d) => (
+                <button
+                  key={d}
+                  className={`seg${streamDensity === d ? " seg-active" : ""}`}
+                  onClick={() => setStreamDensity(d)}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <div className="segmented" title="seed rake span vs model size">
+              {(["full", "core"] as StreamRegion[]).map((r) => (
+                <button
+                  key={r}
+                  className={`seg${streamRegion === r ? " seg-active" : ""}`}
+                  onClick={() => setStreamRegion(r)}
+                >
+                  {r}
+                </button>
+              ))}
             </div>
           </>
         )}

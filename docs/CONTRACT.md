@@ -183,3 +183,14 @@ controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
 - Colormaps implemented in TS (viridis + a blue-white-red diverging), vertex colors on
   BufferGeometry.
 - Polling only, no websockets (keep it simple).
+
+## v2.1 additions (pitch, streamline seeding)
+
+- Config gains `pitch_deg` (default 0; positive = nose-down forward-flight tilt, rotation
+  about Y applied before yaw) and `pitch_sweep` (mutually exclusive with `yaw_sweep`).
+- `GET /api/groups/{gid}` gains `"param": "yaw"|"pitch"` and per-member `"angle"` (the swept
+  value); `yaw_deg` kept for compatibility.
+- `GET /viz/streamlines` gains `density=low|med|high` (5²/7²/10² seed grid) and
+  `region=full|core` (rake span 1.15× / 0.6× model bbox); cached per combination.
+- Frontend: pitch input + sweep-axis select on the form; density/region segmented controls
+  in streamlines mode; sweep panel labels follow the swept parameter.

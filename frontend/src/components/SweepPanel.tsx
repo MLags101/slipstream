@@ -34,7 +34,7 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
   if (group === null) {
     return (
       <section className="panel">
-        <div className="panel-head">Yaw sweep</div>
+        <div className="panel-head">Sweep</div>
         <div className="sweep-loading">
           {poll.error
             ? `Failed to load sweep: ${poll.error.message}`
@@ -44,14 +44,16 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
     );
   }
 
-  const members = [...group.runs].sort((a, b) => a.yaw_deg - b.yaw_deg);
+  const param = group.param ?? "yaw";
+  const angleOf = (m: (typeof group.runs)[number]) => m.angle ?? m.yaw_deg;
+  const members = [...group.runs].sort((a, b) => angleOf(a) - angleOf(b));
   const settled = members.filter((m) => isTerminal(m.status)).length;
   const done = members.filter((m) => m.status === "done" && m.cd !== null);
 
   return (
     <section className="panel">
       <div className="panel-head">
-        Yaw sweep
+        {param === "pitch" ? "Pitch sweep" : "Yaw sweep"}
         <span className="panel-head-meta">
           {group.wind_speed} m/s · {group.quality} · {settled}/{members.length}{" "}
           finished
@@ -69,7 +71,7 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && !active && onSelectRun(m.id)}
             >
-              <span className="sweep-member-yaw mono">{m.yaw_deg}°</span>
+              <span className="sweep-member-yaw mono">{angleOf(m)}°</span>
               <StatusPill status={m.status} />
               {m.status === "done" && m.cd !== null && (
                 <span className="sweep-member-cd mono">
@@ -89,27 +91,27 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
         <>
           <div className="charts">
             <LineChart
-              title="Cd vs yaw"
-              xLabel="yaw (deg)"
+              title={`Cd vs ${param}`}
+              xLabel={`${param} (deg)`}
               markers
               series={[
                 {
                   name: "Cd",
                   color: C_BLUE,
-                  x: done.map((m) => m.yaw_deg),
+                  x: done.map((m) => angleOf(m)),
                   y: done.map((m) => m.cd as number),
                 },
               ]}
             />
             <LineChart
-              title="Drag vs yaw"
-              xLabel="yaw (deg)"
+              title={`Drag vs ${param}`}
+              xLabel={`${param} (deg)`}
               markers
               series={[
                 {
                   name: "drag (N)",
                   color: C_AQUA,
-                  x: done.map((m) => m.yaw_deg),
+                  x: done.map((m) => angleOf(m)),
                   // LineChart drops non-finite points.
                   y: done.map((m) => m.drag_N ?? NaN),
                 },
@@ -120,7 +122,7 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>yaw</th>
+                  <th>{param}</th>
                   <th>Cd</th>
                   <th>drag</th>
                 </tr>
@@ -128,7 +130,7 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
               <tbody>
                 {members.map((m) => (
                   <tr key={m.id}>
-                    <td className="mono">{m.yaw_deg}°</td>
+                    <td className="mono">{angleOf(m)}°</td>
                     <td className="mono">
                       {m.cd !== null ? formatCoeff(m.cd) : "—"}
                     </td>

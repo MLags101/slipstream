@@ -30,6 +30,10 @@ export interface RunConfig {
    * group_id; `yaw_deg` is ignored when present.
    */
   yaw_sweep?: number[];
+  /** Positive pitch = nose-down forward-flight tilt. */
+  pitch_deg?: number;
+  /** v2.1: like yaw_sweep but about the pitch axis (mutually exclusive). */
+  pitch_sweep?: number[];
 }
 
 /** Item of GET /api/runs */
@@ -106,6 +110,8 @@ export interface RunDetail {
 export interface GroupMember {
   id: string;
   yaw_deg: number;
+  /** The swept angle (yaw or pitch, per GroupDetail.param). */
+  angle?: number;
   status: RunStatus;
   progress: number;
   /** null until that member is done. */
@@ -117,6 +123,8 @@ export interface GroupMember {
 export interface GroupDetail {
   group_id: string;
   name: string;
+  /** Which angle the sweep varies; "yaw" for pre-v2.1 groups. */
+  param?: "yaw" | "pitch";
   wind_speed: number;
   quality: Quality;
   runs: GroupMember[];
@@ -170,6 +178,8 @@ export interface VizStreamlines {
 }
 
 export type SliceAxis = "x" | "y" | "z";
+export type StreamDensity = "low" | "med" | "high";
+export type StreamRegion = "full" | "core";
 
 /** Error thrown for non-2xx responses (has the HTTP status). */
 export class ApiError extends Error {
@@ -271,8 +281,14 @@ export const api = {
     return getJson<VizSlice>(`/runs/${id}/viz/slice?axis=${axis}${q}`);
   },
 
-  getVizStreamlines(id: string): Promise<VizStreamlines> {
-    return getJson<VizStreamlines>(`/runs/${id}/viz/streamlines`);
+  getVizStreamlines(
+    id: string,
+    density: StreamDensity = "med",
+    region: StreamRegion = "full",
+  ): Promise<VizStreamlines> {
+    return getJson<VizStreamlines>(
+      `/runs/${id}/viz/streamlines?density=${density}&region=${region}`,
+    );
   },
 
   async deleteRun(id: string): Promise<void> {

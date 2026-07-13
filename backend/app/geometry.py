@@ -9,9 +9,12 @@ import trimesh
 UNIT_SCALE = {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}
 
 
-def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str) -> dict:
-    """Load an STL, scale to meters, center bbox at origin, rotate -yaw about Z,
-    save a binary STL at out_path. Returns model metadata (SI units)."""
+def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
+                pitch_deg: float = 0.0) -> dict:
+    """Load an STL, scale to meters, center bbox at origin, rotate the model
+    (pitch about Y, then -yaw about Z; wind stays along +X), save a binary STL
+    at out_path. Positive pitch = nose-down (forward-flight tilt).
+    Returns model metadata (SI units)."""
     scale = UNIT_SCALE[unit]
     mesh = trimesh.load(stl_path, file_type="stl", force="mesh")
     if mesh.is_empty or len(mesh.faces) == 0:
@@ -23,12 +26,17 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str) -> dict
     center = mesh.bounds.mean(axis=0)
     mesh.apply_translation(-center)
 
-    # Rotate model by -yaw about Z so wind stays along +X.
+    if pitch_deg:
+        rot = trimesh.transformations.rotation_matrix(
+            math.radians(pitch_deg), [0, 1, 0], [0, 0, 0]
+        )
+        mesh.apply_transform(rot)
     if yaw_deg:
         rot = trimesh.transformations.rotation_matrix(
             math.radians(-yaw_deg), [0, 0, 1], [0, 0, 0]
         )
         mesh.apply_transform(rot)
+    if pitch_deg or yaw_deg:
         # Re-center after rotation (bbox changes).
         center = mesh.bounds.mean(axis=0)
         mesh.apply_translation(-center)

@@ -51,31 +51,38 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         raise HTTPException(422, "wind_speed must be a number in (0, 200) m/s")
     cfg.setdefault("name", stl.filename or "unnamed")
     cfg.setdefault("yaw_deg", 0)
+    cfg.setdefault("pitch_deg", 0)
     cfg.setdefault("rho", 1.225)
     cfg.setdefault("nu", 1.5e-5)
 
-    yaw_sweep = cfg.pop("yaw_sweep", None)
-    if yaw_sweep is not None:
-        if (not isinstance(yaw_sweep, list) or not (2 <= len(yaw_sweep) <= 8)
+    sweeps = {p: cfg.pop(f"{p}_sweep", None) for p in ("yaw", "pitch")}
+    sweeps = {p: v for p, v in sweeps.items() if v is not None}
+    if len(sweeps) > 1:
+        raise HTTPException(422, "provide only one of yaw_sweep / pitch_sweep")
+    for p, angles in sweeps.items():
+        if (not isinstance(angles, list) or not (2 <= len(angles) <= 8)
                 or not all(isinstance(a, (int, float)) and not isinstance(a, bool)
-                           and math.isfinite(a) for a in yaw_sweep)):
+                           and math.isfinite(a) for a in angles)):
             raise HTTPException(
-                422, "yaw_sweep must be a list of 2-8 finite numbers (degrees)")
+                422, f"{p}_sweep must be a list of 2-8 finite numbers (degrees)")
 
     data = await stl.read()
     if len(data) < 84:
         raise HTTPException(422, "uploaded file does not look like an STL")
 
-    if yaw_sweep is None:
+    if not sweeps:
         return {"id": _submit_run(data, cfg)}
 
+    (param, angles), = sweeps.items()
     group_id = uuid.uuid4().hex
     base_name = cfg["name"]
+    suffix = "" if param == "yaw" else " pitch"
     ids = []
-    for angle in yaw_sweep:
+    for angle in angles:
         child_cfg = dict(cfg)
-        child_cfg["yaw_deg"] = float(angle)
-        child_cfg["name"] = f"{base_name} @ {angle:g}\N{DEGREE SIGN}"
+        child_cfg[f"{param}_deg"] = float(angle)
+        child_cfg["sweep_param"] = param
+        child_cfg["name"] = f"{base_name} @ {angle:g}\N{DEGREE SIGN}{suffix}"
         ids.append(_submit_run(data, child_cfg, group_id=group_id))
     return {"id": ids[0], "group_id": group_id, "ids": ids}
 
@@ -181,14 +188,17 @@ def get_group(group_id: str):
     members = [s for s in runner.list() if s.get("group_id") == group_id]
     if not members:
         raise HTTPException(404, "group not found")
-    members.sort(key=lambda s: float(s["config"].get("yaw_deg") or 0))
+    param = members[0]["config"].get("sweep_param", "yaw")
+    members.sort(key=lambda s: float(s["config"].get(f"{param}_deg") or 0))
     first = members[0]
     runs = []
     for s in members:
         result = s["result"] if s["status"] == "done" else None
+        angle = s["config"].get(f"{param}_deg", 0)
         runs.append({
             "id": s["id"],
             "yaw_deg": s["config"].get("yaw_deg", 0),
+            "angle": angle,
             "status": s["status"],
             "progress": s["progress"],
             "cd": result.get("cd") if result else None,
@@ -199,6 +209,7 @@ def get_group(group_id: str):
     return {
         "group_id": group_id,
         "name": name,
+        "param": param,
         "wind_speed": first["config"].get("wind_speed"),
         "quality": first["config"].get("quality"),
         "runs": runs,
@@ -255,13 +266,18 @@ def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
 
 
 @app.get("/api/runs/{run_id}/viz/streamlines")
-def get_viz_streamlines(run_id: str):
+def get_viz_streamlines(run_id: str, density: str = "med", region: str = "full"):
+    if density not in ondemand.STREAM_DENSITY:
+        raise HTTPException(422, "density must be low, med or high")
+    if region not in ondemand.STREAM_REGION:
+        raise HTTPException(422, "region must be full or core")
     s = _get_state(run_id)
     if s["status"] != "done":
         raise HTTPException(404, "visualization not available (run not done)")
     try:
         return ondemand.streamlines_json(DATA_DIR / run_id, s["model"],
-                                         float(s["config"].get("rho") or 1.225))
+                                         float(s["config"].get("rho") or 1.225),
+                                         density=density, region=region)
     except RuntimeError as e:
         raise HTTPException(422, str(e))
 

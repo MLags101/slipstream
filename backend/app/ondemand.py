@@ -126,8 +126,13 @@ def slice_json(run_dir: Path, axis: str, pos: float, rho: float) -> dict:
         return payload
 
 
-def streamlines_json(run_dir: Path, model: dict, rho: float) -> dict:
-    cache = run_dir / "viz_streamlines.json"
+STREAM_DENSITY = {"low": 5, "med": 7, "high": 10}   # n -> n*n seed grid
+STREAM_REGION = {"full": 1.15, "core": 0.6}          # span factor vs model bbox
+
+
+def streamlines_json(run_dir: Path, model: dict, rho: float,
+                     density: str = "med", region: str = "full") -> dict:
+    cache = run_dir / f"viz_streamlines_{density}_{region}.json"
     if (payload := _cached(cache)) is not None:
         return payload
     with _LOCK:
@@ -138,11 +143,13 @@ def streamlines_json(run_dir: Path, model: dict, rho: float) -> dict:
         L = bx1 - bx0
         # Seed rake: 7x7 grid upstream of the model, spanning 1.15x its
         # frontal extent so lines both hug and pass the body.
+        n = STREAM_DENSITY[density]
+        span = STREAM_REGION[region]
         # Small jitter keeps seeds off exact cell faces (y=0/z=0 planes),
         # where OpenFOAM's particle tracking stalls immediately.
         x = bx0 - 0.7 * L + 1.3e-4
-        ys = np.linspace(by0, by1, 7) * 1.15 + 1.1e-4
-        zs = np.linspace(bz0, bz1, 7) * 1.15 + 1.7e-4
+        ys = np.linspace(by0, by1, n) * span + 1.1e-4
+        zs = np.linspace(bz0, bz1, n) * span + 1.7e-4
         pts = "\n".join(f"        ({x:.6g} {y:.6g} {z:.6g})"
                         for y in ys for z in zs)
         (case / "system" / "onDemandStreamlines").write_text(

@@ -204,7 +204,8 @@ class Runner:
 
         model = geometry.prepare_stl(
             str(rd / "model.stl"), config["unit"], float(config.get("yaw_deg") or 0),
-            str(rd / "model_prepared.stl"))
+            str(rd / "model_prepared.stl"),
+            pitch_deg=float(config.get("pitch_deg") or 0))
         params = foamcase.compute_params(model, config)
         iterations = params.pop("iterations")
 

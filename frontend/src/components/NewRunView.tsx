@@ -27,7 +27,9 @@ export function NewRunView({ onCreated }: Props) {
   const [unit, setUnit] = useState<StlUnit>("mm");
   const [windSpeed, setWindSpeed] = useState("15");
   const [yawDeg, setYawDeg] = useState("0");
+  const [pitchDeg, setPitchDeg] = useState("0");
   const [sweepEnabled, setSweepEnabled] = useState(false);
+  const [sweepParam, setSweepParam] = useState<"yaw" | "pitch">("yaw");
   const [sweepAngles, setSweepAngles] = useState("0, 15, 30, 45");
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
@@ -103,8 +105,7 @@ export function NewRunView({ onCreated }: Props) {
       setSubmitError("Wind speed must be a positive number");
       return;
     }
-    let yaw = 0;
-    let yawSweep: number[] | undefined;
+    let sweep: number[] | undefined;
     if (sweepEnabled) {
       const angles = sweepAngles
         .split(",")
@@ -117,26 +118,30 @@ export function NewRunView({ onCreated }: Props) {
         angles.some((a) => !Number.isFinite(a))
       ) {
         setSubmitError(
-          "Yaw sweep needs 2–8 comma-separated angles, e.g. 0, 15, 30, 45",
+          "A sweep needs 2–8 comma-separated angles, e.g. 0, 15, 30, 45",
         );
         return;
       }
-      yawSweep = angles;
-    } else {
-      yaw = parseFloat(yawDeg);
-      if (!Number.isFinite(yaw)) {
-        setSubmitError("Yaw must be a number");
-        return;
-      }
+      sweep = angles;
+    }
+    const yawSwept = sweepEnabled && sweepParam === "yaw";
+    const pitchSwept = sweepEnabled && sweepParam === "pitch";
+    const yaw = yawSwept ? 0 : parseFloat(yawDeg);
+    const pitch = pitchSwept ? 0 : parseFloat(pitchDeg);
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) {
+      setSubmitError("Yaw and pitch must be numbers");
+      return;
     }
     const config: RunConfig = {
       name: name.trim() || nameFromFilename(file.name),
       unit,
       wind_speed: ws,
-      // Ignored by the backend when yaw_sweep is present.
+      // The swept angle is ignored by the backend when its sweep is present.
       yaw_deg: yaw,
+      pitch_deg: pitch,
       quality,
-      ...(yawSweep ? { yaw_sweep: yawSweep } : {}),
+      ...(yawSwept ? { yaw_sweep: sweep } : {}),
+      ...(pitchSwept ? { pitch_sweep: sweep } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -249,9 +254,9 @@ export function NewRunView({ onCreated }: Props) {
             </label>
             <label className="field">
               <span className="field-label">
-                {sweepEnabled ? "Yaw angles (deg)" : "Yaw (deg)"}
+                {sweepEnabled && sweepParam === "yaw" ? "Yaw angles (deg)" : "Yaw (deg)"}
               </span>
-              {sweepEnabled ? (
+              {sweepEnabled && sweepParam === "yaw" ? (
                 <input
                   type="text"
                   className="mono"
@@ -274,6 +279,36 @@ export function NewRunView({ onCreated }: Props) {
                 />
               )}
             </label>
+            <label className="field">
+              <span className="field-label">
+                {sweepEnabled && sweepParam === "pitch"
+                  ? "Pitch angles (deg)"
+                  : "Pitch (deg)"}
+              </span>
+              {sweepEnabled && sweepParam === "pitch" ? (
+                <input
+                  type="text"
+                  className="mono"
+                  value={sweepAngles}
+                  onChange={(e) => setSweepAngles(e.target.value)}
+                  placeholder="0, 15, 30, 45"
+                  spellCheck={false}
+                  disabled={!file}
+                  title="2–8 comma-separated pitch angles in degrees"
+                />
+              ) : (
+                <input
+                  type="number"
+                  value={pitchDeg}
+                  onChange={(e) => setPitchDeg(e.target.value)}
+                  min={-90}
+                  max={90}
+                  step="any"
+                  disabled={!file}
+                  title="positive pitch = nose-down forward-flight tilt"
+                />
+              )}
+            </label>
           </div>
           <label className="check-field">
             <input
@@ -282,7 +317,16 @@ export function NewRunView({ onCreated }: Props) {
               onChange={(e) => setSweepEnabled(e.target.checked)}
               disabled={!file}
             />
-            <span>Yaw sweep — queue one run per angle</span>
+            <span>Sweep — queue one run per angle of</span>
+            <select
+              className="sweep-param"
+              value={sweepParam}
+              onChange={(e) => setSweepParam(e.target.value as "yaw" | "pitch")}
+              disabled={!file || !sweepEnabled}
+            >
+              <option value="yaw">yaw</option>
+              <option value="pitch">pitch</option>
+            </select>
           </label>
           <label className="field">
             <span className="field-label">Mesh quality</span>
@@ -305,7 +349,11 @@ export function NewRunView({ onCreated }: Props) {
           className="btn btn-primary btn-block btn-run"
           disabled={!file || submitting}
         >
-          {submitting ? "Starting…" : sweepEnabled ? "Run yaw sweep" : "Run analysis"}
+          {submitting
+            ? "Starting…"
+            : sweepEnabled
+              ? `Run ${sweepParam} sweep`
+              : "Run analysis"}
         </button>
         <div className="config-note">
           Runs execute one at a time — a new run queues behind any active one.
