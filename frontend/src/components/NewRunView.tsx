@@ -251,6 +251,19 @@ export function NewRunView({ onCreated }: Props) {
                 step="any"
                 disabled={!file}
               />
+              <div className="chips">
+                {[10, 15, 25, 40].map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    className="chip"
+                    disabled={!file}
+                    onClick={() => setWindSpeed(String(v))}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
             </label>
             <label className="field">
               <span className="field-label">

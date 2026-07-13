@@ -524,6 +524,28 @@ export function ResultViewer({ runId, config, model }: Props) {
     setSlicePos(mm === 0 && sliceAxis !== "x" ? undefined : mm / 1000);
   };
 
+  // ◀ ▶ step the plane by ~10% of the model's extent along the active axis.
+  const stepMm = (() => {
+    const bb = model?.bbox_m;
+    if (!bb) return 10;
+    const extent = (bb[1][axisIdx] - bb[0][axisIdx]) * 1000;
+    const raw = extent / 10;
+    // round to 1/2/5×10^n so steps read cleanly
+    const mag = Math.pow(10, Math.floor(Math.log10(Math.max(raw, 0.1))));
+    const m = raw / mag;
+    return (m < 1.5 ? 1 : m < 3.5 ? 2 : m < 7.5 ? 5 : 10) * mag;
+  })();
+
+  const stepSlice = (dir: 1 | -1) => {
+    let mm = (parseFloat(posInput) || 0) + dir * stepMm;
+    if (posMin !== undefined && posMax !== undefined) {
+      mm = Math.min(Math.max(mm, posMin), posMax);
+    }
+    mm = Math.round(mm * 100) / 100;
+    setPosInput(String(mm));
+    setSlicePos(mm === 0 && sliceAxis !== "x" ? undefined : mm / 1000);
+  };
+
   return (
     <section className="panel viewer-panel">
       <div className="panel-head viewer-panel-head">
@@ -564,6 +586,14 @@ export function ResultViewer({ runId, config, model }: Props) {
               ))}
             </div>
             <div className="slice-pos">
+              <button
+                className="seg seg-step"
+                onClick={() => stepSlice(-1)}
+                disabled={sweeping}
+                title={`move plane −${stepMm} mm`}
+              >
+                ◀
+              </button>
               <input
                 type="number"
                 value={posInput}
@@ -580,6 +610,14 @@ export function ResultViewer({ runId, config, model }: Props) {
                 }
               />
               <span className="slice-pos-unit">mm</span>
+              <button
+                className="seg seg-step"
+                onClick={() => stepSlice(1)}
+                disabled={sweeping}
+                title={`move plane +${stepMm} mm`}
+              >
+                ▶
+              </button>
               <button className="seg" onClick={applySlicePos} disabled={sweeping}>
                 Set
               </button>
