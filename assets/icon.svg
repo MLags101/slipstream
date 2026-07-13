@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <clipPath id="squircle"><rect x="80" y="80" width="864" height="864" rx="190"/></clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect x="80" y="80" width="864" height="864" fill="#0b0c0e"/>
+    <g stroke="#35c5dd" stroke-opacity="0.13" stroke-width="3">
+      <path d="M80 296 H944 M80 512 H944 M80 728 H944 M296 80 V944 M512 80 V944 M728 80 V944"/>
+    </g>
+    <!-- streamlines bending over an airfoil-ish hump -->
+    <g fill="none" stroke-linecap="round">
+      <path d="M120 380 C 320 380 380 300 512 300 C 644 300 704 380 904 380" stroke="#35c5dd" stroke-width="34"/>
+      <path d="M120 512 C 320 512 360 420 512 420 C 664 420 704 512 904 512" stroke="#35c5dd" stroke-width="34" stroke-opacity="0.75"/>
+      <path d="M120 644 C 320 644 380 596 512 596 C 644 596 704 644 904 644" stroke="#35c5dd" stroke-width="34" stroke-opacity="0.5"/>
+      <path d="M120 776 C 340 776 400 756 512 756 C 624 756 684 776 904 776" stroke="#f0b429" stroke-width="34"/>
+    </g>
+    <!-- solid body -->
+    <path d="M330 512 L 512 452 L 694 512 L 512 552 Z" fill="#e7e9ec"/>
+  </g>
+</svg>

@@ -1,5 +1,103 @@
+<p align="center"><img src="assets/icon-1024.png" width="128" alt="WindTunnel icon"></p>
+
 # WindTunnel
 
-Drop in an STL, get a wind tunnel analysis. Local, free, OpenFOAM-powered.
+**Drop in an STL. Get a wind tunnel analysis. Free, local, yours.**
 
-See docs/CONTRACT.md for architecture. `backend/` FastAPI + OpenFOAM pipeline, `frontend/` Vite+React+three.js.
+WindTunnel is a desktop virtual wind tunnel for makers — drone frames, RC planes,
+fairings, anything you can export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
+(the industry-standard open-source CFD solver) in a one-window app: no dictionaries,
+no meshing tutorials, no cloud fees.
+
+- **Drag & drop an STL** → live 3D preview showing exactly how it will sit in the tunnel
+- **Real CFD**: automatic meshing (snappyHexMesh) + steady RANS (simpleFoam, k-ω SST)
+- **Results that matter**: drag & lift coefficients and forces, frontal area,
+  pressure-vs-viscous drag breakdown, convergence quality
+- **See the flow**: surface pressure maps, movable flow slices on all three axes
+  (with sweep animation), velocity-colored streamlines
+- **Go further**: yaw/pitch sweeps with polar charts, two-run comparison,
+  propeller actuator disks for powered flow, and an auto-**trim solver** that finds
+  the forward-flight attitude and per-motor thrust for a given weight and speed
+- Runs **auto-stop when converged**, saving 30–40% of solve time
+
+## Getting started (3 steps)
+
+1. **Install OpenFOAM** (one-time):
+   ```sh
+   brew install --cask gerlero/openfoam/openfoam
+   ```
+2. **Install WindTunnel** — either:
+   ```sh
+   brew install --cask --no-quarantine YOUR_GITHUB_USERNAME/windtunnel/windtunnel
+   ```
+   or download `WindTunnel.zip` from [Releases](../../releases), unzip into
+   `/Applications`, then see the note below about first launch.
+3. **Run your first analysis**: open WindTunnel, drop an STL onto the target,
+   check the unit (mm for 3D-print exports), set a wind speed, pick **coarse**
+   quality, and hit **Run analysis**. A few minutes later you'll have a drag
+   coefficient and a flow field to explore. Tip: coarse is great for comparing
+   design variants; medium/fine for final numbers.
+
+## "macOS says the app is from an unidentified developer"
+
+WindTunnel is free and unsigned — an Apple Developer certificate costs $99/year,
+which this project doesn't have (yet). The app is open source, and you can read or
+build every line of it. To open it the first time:
+**System Settings → Privacy & Security → "Open Anyway"**, or install via the
+Homebrew command above (`--no-quarantine` skips the warning entirely).
+
+**Want the warning gone for everyone?** [Sponsor the project](../../sponsors) —
+the first goal is exactly that certificate.
+
+## How it works
+
+Your STL is scaled, centered, and rotated to the requested attitude, then placed in
+an automatically-sized virtual tunnel (blockage-checked). snappyHexMesh builds a
+body-fitted hex mesh with boundary layers; simpleFoam solves steady incompressible
+RANS on all cores; force coefficients, residuals, slices, and streamlines are
+extracted and streamed to the UI live. Everything runs on **your** machine —
+no uploads, no accounts, no queue behind strangers.
+
+Propellers are modeled as actuator disks (momentum sources) — enough physics to
+show real downwash, inflow, and airframe download without blade-resolved meshing.
+
+## Building from source
+
+```sh
+# backend (Python 3.12+)
+cd backend && python3 -m venv .venv
+.venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart numpy trimesh meshio
+# frontend (Node 20+)
+cd ../frontend && npm install && npm run build
+# desktop app
+cd ../backend && .venv/bin/pip install pywebview pyinstaller
+.venv/bin/pyinstaller --noconfirm --windowed --name WindTunnel \
+  --icon ../assets/WindTunnel.icns \
+  --add-data "../frontend/dist:ui" \
+  --add-data "app/foam_template:app/foam_template" \
+  --collect-submodules app \
+  --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
+  --hidden-import uvicorn.protocols.http.auto \
+  --hidden-import uvicorn.protocols.websockets.auto \
+  --hidden-import uvicorn.lifespan.on \
+  desktop_app.py
+open dist/WindTunnel.app
+```
+
+For development, run the backend (`uvicorn app.main:app --port 8000`) and frontend
+(`npm run dev`) separately; see [docs/CONTRACT.md](docs/CONTRACT.md) for the full
+architecture and API.
+
+## Fair warnings
+
+- CFD accuracy depends on mesh resolution: **coarse** answers "is A better than B",
+  **fine** answers "what's the number". Trust trends more than the third decimal.
+- Runs are CPU-hungry by design — a coarse run uses ~6 cores for a few minutes.
+- Run data lives in `~/.windtunnel` (OpenFOAM can't handle spaces in paths, so not
+  `~/Library/Application Support`).
+
+## License
+
+MIT for everything in this repository. OpenFOAM is a separate GPL-licensed program
+invoked as an external process — it is not bundled; install it from
+[openfoam.app](https://github.com/gerlero/openfoam-app) or openfoam.com.

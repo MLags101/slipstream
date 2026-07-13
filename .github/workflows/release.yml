@@ -1,0 +1,59 @@
+# Builds WindTunnel.app on a free GitHub macOS runner and attaches it to the
+# release whenever you push a version tag:  git tag v0.1.0 && git push --tags
+name: Release macOS app
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-14 # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build app bundle
+        working-directory: backend
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart \
+            numpy trimesh meshio pywebview pyinstaller
+          .venv/bin/pyinstaller --noconfirm --windowed --name WindTunnel \
+            --icon ../assets/WindTunnel.icns \
+            --add-data "../frontend/dist:ui" \
+            --add-data "app/foam_template:app/foam_template" \
+            --collect-submodules app \
+            --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
+            --hidden-import uvicorn.protocols.http.auto \
+            --hidden-import uvicorn.protocols.websockets.auto \
+            --hidden-import uvicorn.lifespan.on \
+            desktop_app.py
+
+      - name: Zip app
+        run: |
+          cd backend/dist
+          ditto -c -k --keepParent WindTunnel.app WindTunnel-${{ github.ref_name }}-macos-arm64.zip
+          shasum -a 256 WindTunnel-${{ github.ref_name }}-macos-arm64.zip
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: backend/dist/WindTunnel-${{ github.ref_name }}-macos-arm64.zip
+          generate_release_notes: true

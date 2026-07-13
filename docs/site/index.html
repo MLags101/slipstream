@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WindTunnel — free virtual wind tunnel for makers</title>
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0c0e;--panel:#131519;--border:#23262c;--text:#e7e9ec;--text2:#9aa1ab;
+--accent:#35c5dd;--accent-dim:#1b7f92;--readout:#f0b429;
+--sans:"Chakra Petch",system-ui,sans-serif;--mono:"IBM Plex Mono",monospace}
+*{box-sizing:border-box}
+body{margin:0;background:
+ linear-gradient(rgba(53,197,221,.02) 1px,transparent 1px),
+ linear-gradient(90deg,rgba(53,197,221,.02) 1px,transparent 1px),var(--bg);
+ background-size:28px 28px,28px 28px,auto;color:var(--text);
+ font-family:var(--sans);line-height:1.55}
+main{max-width:880px;margin:0 auto;padding:56px 24px 80px}
+.hero{text-align:center;padding:40px 0 24px}
+.hero img{width:112px;height:112px}
+h1{font-size:34px;letter-spacing:.18em;text-transform:uppercase;margin:18px 0 8px}
+.tag{color:var(--text2);font-size:17px;margin:0 0 30px}
+.tag b{color:var(--accent);font-weight:500}
+.cta{display:inline-block;background:var(--accent);color:#04181c;text-decoration:none;
+ font-weight:600;text-transform:uppercase;letter-spacing:.08em;font-size:14px;
+ padding:13px 30px;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.cta:hover{background:#5fd7ea}
+.brew{margin:22px auto 0;max-width:640px;background:rgba(9,10,12,.85);
+ border:1px solid var(--border);padding:12px 16px;font-family:var(--mono);
+ font-size:13px;color:var(--text2);overflow-x:auto;white-space:nowrap;text-align:left}
+.brew b{color:var(--accent);font-weight:500}
+section{margin-top:56px}
+h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--text2);
+ border-bottom:1px solid var(--border);padding-bottom:10px}
+h2::before{content:"▸ ";color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:18px}
+.card{position:relative;background:var(--panel);border:1px solid var(--border);padding:16px 18px}
+.card::before{content:"";position:absolute;top:-1px;left:-1px;width:12px;height:12px;
+ border-top:2px solid var(--accent-dim);border-left:2px solid var(--accent-dim)}
+.card h3{margin:0 0 6px;font-size:14.5px;letter-spacing:.04em}
+.card p{margin:0;color:var(--text2);font-size:13.5px}
+.num{font-family:var(--mono);color:var(--readout)}
+ol{color:var(--text2)} ol li{margin:10px 0} ol b{color:var(--text)}
+code{font-family:var(--mono);font-size:.92em;color:var(--accent)}
+.warn{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--readout);
+ padding:16px 18px;margin-top:18px;color:var(--text2);font-size:14px}
+.warn b{color:var(--readout)}
+.warn a{color:var(--accent)}
+footer{margin-top:70px;text-align:center;color:#667080;font-size:12.5px;
+ letter-spacing:.06em}
+footer a{color:var(--text2)}
+.shots{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
+.shots img{width:100%;border:1px solid var(--border);display:block}
+@media(max-width:640px){.shots{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img src="icon.png" alt="">
+    <h1>WindTunnel</h1>
+    <p class="tag">Drop in an STL. Get a wind tunnel analysis.<br>
+      <b>Free · runs on your Mac · powered by OpenFOAM</b></p>
+    <a class="cta" href="https://github.com/YOUR_GITHUB_USERNAME/windtunnel/releases/latest">Download for macOS</a>
+    <div class="brew">
+      <span style="color:#667080"># or via Homebrew (no security prompts):</span><br>
+      <b>brew install</b> --cask gerlero/openfoam/openfoam<br>
+      <b>brew install</b> --cask --no-quarantine YOUR_GITHUB_USERNAME/windtunnel/windtunnel
+    </div>
+  </div>
+
+  <section>
+    <h2>Screenshots</h2>
+    <div class="shots">
+      <!-- Drop PNGs into docs/site/ and update these -->
+      <img src="shot-results.png" alt="Results view with drag coefficient">
+      <img src="shot-slice.png" alt="Flow slice showing wake">
+    </div>
+  </section>
+
+  <section>
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card"><h3>Real CFD, zero setup</h3><p>Automatic meshing and a steady RANS solve (k-ω SST) sized to your model. Coarse compare-runs in ~3 min.</p></div>
+      <div class="card"><h3>Numbers you can use</h3><p>Cd, drag &amp; lift forces, frontal area, pressure-vs-viscous breakdown, convergence quality.</p></div>
+      <div class="card"><h3>See the flow</h3><p>Surface pressure, movable slice planes with sweep animation, velocity-colored streamlines.</p></div>
+      <div class="card"><h3>Attitude sweeps</h3><p>Yaw or pitch sweeps with Cd-vs-angle charts, plus side-by-side run comparison.</p></div>
+      <div class="card"><h3>Powered flight</h3><p>Propeller actuator disks show downwash and airframe download from real thrust values.</p></div>
+      <div class="card"><h3>Auto-trim</h3><p>Give it weight and speed — it iterates CFD to find the forward-flight tilt and per-motor thrust.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Get flying in 3 steps</h2>
+    <ol>
+      <li><b>Install OpenFOAM</b> (the solver, one-time): <code>brew install --cask gerlero/openfoam/openfoam</code></li>
+      <li><b>Install WindTunnel</b> with the button or brew command above.</li>
+      <li><b>Drop an STL</b>, check the unit, set wind speed, hit <b>Run analysis</b>.</li>
+    </ol>
+    <div class="warn"><b>Unsigned app notice:</b> WindTunnel has no Apple Developer
+      certificate ($99/yr — this project is free and unfunded). First launch from a
+      direct download needs System Settings → Privacy &amp; Security → <b>"Open
+      Anyway"</b>; the Homebrew command avoids it entirely. Everything is open
+      source. <a href="https://github.com/sponsors/YOUR_GITHUB_USERNAME">Sponsor
+      the project</a> and the first goal — signing the app so this notice
+      disappears — gets funded.</div>
+  </section>
+
+  <footer>
+    <a href="https://github.com/YOUR_GITHUB_USERNAME/windtunnel">GitHub</a> ·
+    MIT licensed · invokes OpenFOAM (GPL, installed separately) ·
+    made for people who break props
+  </footer>
+</main>
+</body>
+</html>
