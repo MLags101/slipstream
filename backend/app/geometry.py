@@ -24,6 +24,8 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
 
     # Center bounding-box center at origin.
     center = mesh.bounds.mean(axis=0)
+    c1 = [float(v) for v in center]
+    c2 = [0.0, 0.0, 0.0]
     mesh.apply_translation(-center)
 
     if pitch_deg:
@@ -39,6 +41,7 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
     if pitch_deg or yaw_deg:
         # Re-center after rotation (bbox changes).
         center = mesh.bounds.mean(axis=0)
+        c2 = [float(v) for v in center]
         mesh.apply_translation(-center)
 
     mesh.export(out_path, file_type="stl")  # binary STL
@@ -51,7 +54,45 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
         "frontal_area_m2": float(frontal_area),
         "triangles": int(len(mesh.faces)),
         "centroid": [float(c) for c in mesh.bounds.mean(axis=0)],
+        "_c1": c1,
+        "_c2": c2,
     }
+
+
+def transform_props(props: list[dict], unit: str, yaw_deg: float,
+                    pitch_deg: float, model: dict) -> list[dict]:
+    """Map propeller disk specs given in original STL coordinates into the
+    prepared model frame (meters, centered, pitched, yawed) — the same
+    transform prepare_stl applies to the mesh. Each prop: {"center": [x,y,z]
+    original units, "diameter": original units, "thrust_g": grams}. The thrust
+    axis is +Z in the model's own frame (rotates with pitch/yaw).
+
+    Reconstructing the exact two centering shifts prepare_stl used would
+    require the mesh; instead we replay it: scale/center/rotate the centers
+    with the recorded final bbox center of the *model* as reference. To keep
+    this exact, prepare_stl is re-run logic-free here: we recompute both
+    centering shifts from the raw mesh bounds passed via `model["_c1"]` /
+    `model["_c2"]` recorded during preparation."""
+    import numpy as np
+    scale = UNIT_SCALE[unit]
+    c1 = np.asarray(model["_c1"])
+    c2 = np.asarray(model["_c2"])
+    rp = trimesh.transformations.rotation_matrix(
+        math.radians(pitch_deg), [0, 1, 0])[:3, :3]
+    ry = trimesh.transformations.rotation_matrix(
+        math.radians(-yaw_deg), [0, 0, 1])[:3, :3]
+    rot = ry @ rp
+    out = []
+    for p in props:
+        c = rot @ (np.asarray(p["center"], dtype=float) * scale - c1) - c2
+        axis = rot @ np.asarray([0.0, 0.0, 1.0])
+        out.append({
+            "center_m": [float(v) for v in c],
+            "axis": [float(v) for v in axis],
+            "diameter_m": float(p["diameter"]) * scale,
+            "thrust_N": float(p["thrust_g"]) * 9.81 / 1000.0,
+        })
+    return out
 
 
 def frontal_area_yz(triangles: np.ndarray, resolution: int = 512) -> float:

@@ -31,6 +31,10 @@ export function NewRunView({ onCreated }: Props) {
   const [sweepEnabled, setSweepEnabled] = useState(false);
   const [sweepParam, setSweepParam] = useState<"yaw" | "pitch">("yaw");
   const [sweepAngles, setSweepAngles] = useState("0, 15, 30, 45");
+  const [propsEnabled, setPropsEnabled] = useState(false);
+  const [propRows, setPropRows] = useState<
+    { x: string; y: string; z: string; d: string; t: string }[]
+  >([{ x: "0", y: "0", z: "0", d: "127", t: "300" }]);
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -132,6 +136,24 @@ export function NewRunView({ onCreated }: Props) {
       setSubmitError("Yaw and pitch must be numbers");
       return;
     }
+    let props: RunConfig["props"];
+    if (propsEnabled) {
+      props = [];
+      for (const r of propRows) {
+        const vals = [r.x, r.y, r.z, r.d, r.t].map((v) => parseFloat(v));
+        if (vals.some((v) => !Number.isFinite(v)) || vals[3] <= 0 || vals[4] < 0) {
+          setSubmitError(
+            "Each propeller needs finite X/Y/Z, a positive diameter and thrust ≥ 0",
+          );
+          return;
+        }
+        props.push({
+          center: [vals[0], vals[1], vals[2]],
+          diameter: vals[3],
+          thrust_g: vals[4],
+        });
+      }
+    }
     const config: RunConfig = {
       name: name.trim() || nameFromFilename(file.name),
       unit,
@@ -142,6 +164,7 @@ export function NewRunView({ onCreated }: Props) {
       quality,
       ...(yawSwept ? { yaw_sweep: sweep } : {}),
       ...(pitchSwept ? { pitch_sweep: sweep } : {}),
+      ...(props && props.length ? { props } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -341,6 +364,70 @@ export function NewRunView({ onCreated }: Props) {
               <option value="pitch">pitch</option>
             </select>
           </label>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={propsEnabled}
+              onChange={(e) => setPropsEnabled(e.target.checked)}
+              disabled={!file}
+            />
+            <span>Propeller disks — powered flow</span>
+          </label>
+          {propsEnabled && (
+            <div className="prop-editor">
+              <div className="prop-row prop-row-head">
+                <span>x</span><span>y</span><span>z</span>
+                <span>ø</span><span>thrust g</span><span />
+              </div>
+              {propRows.map((r, i) => (
+                <div className="prop-row" key={i}>
+                  {(["x", "y", "z", "d", "t"] as const).map((k) => (
+                    <input
+                      key={k}
+                      type="number"
+                      step="any"
+                      value={r[k]}
+                      onChange={(e) =>
+                        setPropRows((rows) =>
+                          rows.map((row, j) =>
+                            j === i ? { ...row, [k]: e.target.value } : row,
+                          ),
+                        )
+                      }
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="remove propeller"
+                    onClick={() =>
+                      setPropRows((rows) => rows.filter((_, j) => j !== i))
+                    }
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+              <div className="prop-editor-foot">
+                <button
+                  type="button"
+                  className="chip"
+                  disabled={propRows.length >= 8}
+                  onClick={() =>
+                    setPropRows((rows) => [
+                      ...rows,
+                      { x: "0", y: "0", z: "0", d: "127", t: "300" },
+                    ])
+                  }
+                >
+                  + add propeller
+                </button>
+                <span className="config-note">
+                  positions/ø in STL units · thrust axis = model +Z
+                </span>
+              </div>
+            </div>
+          )}
           <label className="field">
             <span className="field-label">Mesh quality</span>
             <select

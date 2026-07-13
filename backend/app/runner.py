@@ -241,6 +241,28 @@ class Runner:
         self.update(run_id, mesh_cells=mesh_cells, progress=0.35,
                     message=f"Mesh ready ({mesh_cells or '?'} cells)")
 
+        # ---- propeller actuator disks (optional) ---------------------------
+        props_cfg = config.get("props") or []
+        if props_cfg:
+            self.update(run_id, message=f"Marking {len(props_cfg)} propeller "
+                                        "disk zones")
+            props = geometry.transform_props(
+                props_cfg, config["unit"], float(config.get("yaw_deg") or 0),
+                float(config.get("pitch_deg") or 0), model)
+            foamcase.write_prop_disks(case, props,
+                                      float(config.get("rho") or 1.225),
+                                      params["base_cell"])
+            self._foam(case, "topoSet -dict system/topoSetDict.props",
+                       "log.topoSet", run_id)
+            log = (case / "log.topoSet").read_text(errors="replace")
+            import re as _re
+            counts = [int(m.group(1)) for m in
+                      _re.finditer(r"Added (\d+) cells", log)]
+            if counts and min(counts) == 0:
+                raise RuntimeError(
+                    "a propeller disk selected 0 mesh cells - check its "
+                    "position/diameter against the model (see log.topoSet)")
+
         # ---- solving (0.35 - 0.9) -----------------------------------------
         self.update(run_id, status="solving", progress=0.36,
                     message="Decomposing domain for parallel solve")

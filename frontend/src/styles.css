@@ -1482,3 +1482,48 @@ body {
   font-size: 11.5px;
   letter-spacing: 0.04em;
 }
+
+/* --- propeller disk editor ---------------------------------------------- */
+
+.prop-editor {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+
+.prop-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 1.2fr 26px;
+  gap: 4px;
+  margin-bottom: 4px;
+  align-items: center;
+}
+
+.prop-row-head {
+  font-family: var(--sans);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.prop-row input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text);
+  background: rgba(9, 10, 12, 0.85);
+  border: 1px solid var(--border);
+}
+
+.prop-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.prop-editor-foot .config-note {
+  margin: 0;
+}

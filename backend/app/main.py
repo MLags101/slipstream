@@ -55,6 +55,25 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     cfg.setdefault("rho", 1.225)
     cfg.setdefault("nu", 1.5e-5)
 
+    props = cfg.get("props")
+    if props is not None:
+        def _num(v):
+            return (isinstance(v, (int, float)) and not isinstance(v, bool)
+                    and math.isfinite(v))
+        if (not isinstance(props, list) or len(props) > 8 or not all(
+                isinstance(p, dict)
+                and isinstance(p.get("center"), list) and len(p["center"]) == 3
+                and all(_num(v) for v in p["center"])
+                and _num(p.get("diameter")) and p["diameter"] > 0
+                and _num(p.get("thrust_g")) and p["thrust_g"] >= 0
+                for p in props)):
+            raise HTTPException(
+                422, "props must be a list of up to 8 "
+                     "{center:[x,y,z], diameter>0, thrust_g>=0} entries "
+                     "(original STL units / grams)")
+        if not props:
+            cfg.pop("props")
+
     sweeps = {p: cfg.pop(f"{p}_sweep", None) for p in ("yaw", "pitch")}
     sweeps = {p: v for p, v in sweeps.items() if v is not None}
     if len(sweeps) > 1:

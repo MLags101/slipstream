@@ -194,3 +194,15 @@ controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
   `region=full|core` (rake span 1.15× / 0.6× model bbox); cached per combination.
 - Frontend: pitch input + sweep-axis select on the form; density/region segmented controls
   in streamlines mode; sweep panel labels follow the swept parameter.
+
+## v3 additions (propeller actuator disks)
+
+- Config gains optional `"props"`: up to 8 `{center:[x,y,z], diameter, thrust_g}` entries
+  (center/diameter in the STL's own units, thrust in grams; thrust axis is the model's +Z
+  and rotates with pitch/yaw). Each disk becomes a cylinder cellZone (topoSet after
+  meshing) carrying a semi-implicit momentum source of thrust/rho opposite the thrust
+  axis (downwash into the flow). A disk that selects 0 cells fails the run with a clear
+  error. Reported forces remain surface integrals over the model patch — thrust itself
+  acts on the fluid, so lift_N shows the airframe download in the prop wash.
+- Frontend: "Propeller disks — powered flow" checkbox on the form reveals a row editor
+  (x/y/z/ø/thrust g per prop, add/remove, max 8).

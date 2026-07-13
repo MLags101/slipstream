@@ -34,6 +34,18 @@ export interface RunConfig {
   pitch_deg?: number;
   /** v2.1: like yaw_sweep but about the pitch axis (mutually exclusive). */
   pitch_sweep?: number[];
+  /**
+   * v3: propeller actuator disks (powered flow). Coordinates/diameter in the
+   * STL's own units, thrust in grams; thrust axis is the model's +Z (rotates
+   * with pitch/yaw).
+   */
+  props?: PropSpec[];
+}
+
+export interface PropSpec {
+  center: [number, number, number];
+  diameter: number;
+  thrust_g: number;
 }
 
 /** Item of GET /api/runs */

@@ -92,7 +92,9 @@ def compute_params(model: dict, config: dict) -> dict:
         "maxGlobalCells": str(q["max_global_cells"]),
         "nprocs": str(NPROCS),
         "doLayers": "true",
-        "iterations": q["iterations"],  # convenience for the runner (not a template key)
+        # convenience for the runner (non-string: not template keys)
+        "iterations": q["iterations"],
+        "base_cell": cell,
     }
 
 
@@ -124,3 +126,75 @@ def set_add_layers(case_dir: str | Path, enabled: bool) -> None:
     old = "addLayers       true;" if not enabled else "addLayers       false;"
     new = "addLayers       false;" if not enabled else "addLayers       true;"
     p.write_text(text.replace(old, new))
+
+
+# ---------------------------------------------------------------------------
+# Propeller actuator disks: cylinder cellZones + momentum sources (fvOptions)
+# ---------------------------------------------------------------------------
+
+_FOAM_HEADER = """FoamFile
+{{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      {obj};
+}}
+"""
+
+
+def write_prop_disks(case_dir: str | Path, props: list[dict], rho: float,
+                     base_cell: float) -> None:
+    """Write system/topoSetDict.props (cylinder cellZone per disk) and
+    constant/fvOptions (semi-implicit momentum source per disk). Props are in
+    the prepared model frame (see geometry.transform_props); thrust pushes
+    the craft along +axis, so the momentum added to the AIR is along -axis."""
+    case_dir = Path(case_dir)
+    actions = []
+    options = []
+    for i, p in enumerate(props, start=1):
+        cx, cy, cz = p["center_m"]
+        ax, ay, az = p["axis"]
+        r = p["diameter_m"] / 2.0
+        # Disk thickness: thick enough to contain refined cells near the model.
+        t = max(0.15 * p["diameter_m"], 1.5 * base_cell / 4.0)
+        p1 = (cx - ax * t / 2, cy - ay * t / 2, cz - az * t / 2)
+        p2 = (cx + ax * t / 2, cy + ay * t / 2, cz + az * t / 2)
+        actions.append(f"""
+    {{
+        name    disk{i}Cells;
+        type    cellSet;
+        action  new;
+        source  cylinderToCell;
+        p1      ({p1[0]:.6g} {p1[1]:.6g} {p1[2]:.6g});
+        p2      ({p2[0]:.6g} {p2[1]:.6g} {p2[2]:.6g});
+        radius  {r:.6g};
+    }}
+    {{
+        name    disk{i};
+        type    cellZoneSet;
+        action  new;
+        source  setToCellZone;
+        set     disk{i}Cells;
+    }}""")
+        # simpleFoam is incompressible: source is thrust / rho (m^4/s^2),
+        # applied to the air opposite the craft's thrust axis.
+        s = p["thrust_N"] / rho
+        sx, sy, sz = -ax * s, -ay * s, -az * s
+        options.append(f"""
+disk{i}
+{{
+    type            vectorSemiImplicitSource;
+    selectionMode   cellZone;
+    cellZone        disk{i};
+    volumeMode      absolute;
+    injectionRateSuSp
+    {{
+        U           (({sx:.6g} {sy:.6g} {sz:.6g}) 0);
+    }}
+}}""")
+
+    (case_dir / "system" / "topoSetDict.props").write_text(
+        _FOAM_HEADER.format(obj="topoSetDict") +
+        "\nactions\n(" + "".join(actions) + "\n);\n")
+    (case_dir / "constant" / "fvOptions").write_text(
+        _FOAM_HEADER.format(obj="fvOptions") + "".join(options) + "\n")
