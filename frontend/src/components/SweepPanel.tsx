@@ -45,20 +45,44 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
   }
 
   const param = group.param ?? "yaw";
+  const isTrim = group.kind === "trim";
   const angleOf = (m: (typeof group.runs)[number]) => m.angle ?? m.yaw_deg;
-  const members = [...group.runs].sort((a, b) => angleOf(a) - angleOf(b));
+  // Trim members arrive in iteration order — keep it. Sweeps sort by angle.
+  const members = isTrim
+    ? [...group.runs]
+    : [...group.runs].sort((a, b) => angleOf(a) - angleOf(b));
   const settled = members.filter((m) => isTerminal(m.status)).length;
   const done = members.filter((m) => m.status === "done" && m.cd !== null);
+  const trim = group.trim;
 
   return (
     <section className="panel">
       <div className="panel-head">
-        {param === "pitch" ? "Pitch sweep" : "Yaw sweep"}
+        {isTrim ? "Trim solve" : param === "pitch" ? "Pitch sweep" : "Yaw sweep"}
         <span className="panel-head-meta">
           {group.wind_speed} m/s · {group.quality} · {settled}/{members.length}{" "}
           finished
         </span>
       </div>
+      {isTrim && trim && (
+        <div className="trim-strip mono">
+          {trim.converged === null || trim.converged === undefined ? (
+            <>trimming… iteration {trim.iterations || members.length}</>
+          ) : trim.error ? (
+            <span className="trim-strip-error">
+              TRIM FAILED after {trim.iterations} iteration
+              {trim.iterations === 1 ? "" : "s"} — {trim.error}
+            </span>
+          ) : (
+            <>
+              {trim.converged ? "TRIM" : "TRIM (max iterations)"}: tilt{" "}
+              {(trim.tilt_deg ?? 0).toFixed(1)}° · thrust{" "}
+              {Math.round(trim.thrust_g_per_prop ?? 0)} g/prop · drag{" "}
+              {(trim.drag_N ?? 0).toFixed(2)} N
+            </>
+          )}
+        </div>
+      )}
       <div className="sweep-members">
         {members.map((m) => {
           const active = m.id === activeRunId;

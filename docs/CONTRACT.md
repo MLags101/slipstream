@@ -206,3 +206,32 @@ controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
   acts on the fluid, so lift_N shows the airframe download in the prop wash.
 - Frontend: "Propeller disks — powered flow" checkbox on the form reveals a row editor
   (x/y/z/ø/thrust g per prop, add/remove, max 8).
+
+## v3.1 additions (trim solver)
+
+- `POST /api/runs` accepts optional `"trim": {"weight_g": 700, "max_iters": 5,
+  "tol_deg": 0.75}` (`weight_g` required > 0 grams; others optional, defaults shown).
+  Requires non-empty `props`; 422 when combined with a sweep. Response is
+  `{"id": <first iteration run>, "group_id", "ids": [first]}` — further iterations
+  join the group as they are submitted.
+- Solver (backend `app/trim.py`, one controller thread per job): finds the
+  forward-flight trim attitude. W = weight_g·9.81/1000; with L₀ = 0 and
+  θ₁ = −atan2(0.12·W, W) (~−6.8°), iteration i flies pitch θᵢ with total thrust
+  Tᵢ = max(W − Lᵢ₋₁, 0.1·W)/cos θᵢ split equally over the props, then
+  θᵢ₊₁ = −atan2(Dᵢ, W − Lᵢ). Converged when |θᵢ₊₁ − θᵢ| ≤ tol_deg, else stop at
+  max_iters. Trim pitch is negative (thrust leans upstream, −X). Members are normal
+  runs named `"<base> @ trim N"` with `sweep_param: "pitch"` and the `trim` dict in
+  their config; the final summary is written as `trim_summary.json` in the FIRST
+  iteration's run dir. A controller lost to a server restart leaves the group
+  without a summary (reported as still trimming).
+- `GET /api/groups/{gid}` gains `"kind": "sweep"|"trim"`; trim groups (sorted by
+  submission order, not angle) also carry `"trim"`: the summary
+  `{"converged", "iterations", "trim_pitch_deg", "tilt_deg", "total_thrust_N",
+  "thrust_g_per_prop", "drag_N", "lift_N", "weight_g", "wind_speed",
+  "history": [{"pitch_deg","drag_N","lift_N","thrust_g_per_prop"}...], "error"}`
+  once written, else partial progress `{"converged": null, "iterations": <members>}`.
+- Frontend: "Solve trim attitude" checkbox + craft weight (g) input inside the
+  propeller-disks section; pitch, sweep and per-prop thrust inputs are disabled
+  ("solved by trim") while on. The sweep panel becomes "Trim solve" for trim groups
+  with an amber readout strip (tilt / thrust per prop / drag, or
+  "trimming… iteration k").

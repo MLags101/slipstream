@@ -1033,6 +1033,19 @@ body {
   font-size: 12.5px;
 }
 
+/* v3.1: trim solver result strip — amber instrument readout */
+.trim-strip {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--readout);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.trim-strip-error {
+  color: var(--danger);
+}
+
 .sweep-members {
   padding: 10px 14px;
   display: flex;

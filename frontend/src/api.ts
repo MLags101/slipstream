@@ -40,6 +40,12 @@ export interface RunConfig {
    * with pitch/yaw).
    */
   props?: PropSpec[];
+  /**
+   * v3.1: solve the forward-flight trim attitude. Requires `props`; mutually
+   * exclusive with sweeps. The backend iterates runs (shared group) adjusting
+   * pitch and per-prop thrust until equilibrium.
+   */
+  trim?: { weight_g: number; max_iters?: number; tol_deg?: number };
 }
 
 export interface PropSpec {
@@ -131,15 +137,41 @@ export interface GroupMember {
   drag_N: number | null;
 }
 
+/** v3.1: trim solver progress/result (GroupDetail.trim for trim groups). */
+export interface TrimSummary {
+  /** true/false once the solver finished; null while still trimming. */
+  converged: boolean | null;
+  iterations: number;
+  trim_pitch_deg?: number;
+  tilt_deg?: number;
+  total_thrust_N?: number | null;
+  thrust_g_per_prop?: number | null;
+  drag_N?: number | null;
+  lift_N?: number | null;
+  weight_g?: number;
+  wind_speed?: number;
+  history?: {
+    pitch_deg: number;
+    drag_N: number;
+    lift_N: number;
+    thrust_g_per_prop: number;
+  }[];
+  error?: string | null;
+}
+
 /** GET /api/groups/{group_id} — yaw sweep summary. */
 export interface GroupDetail {
   group_id: string;
   name: string;
   /** Which angle the sweep varies; "yaw" for pre-v2.1 groups. */
   param?: "yaw" | "pitch";
+  /** v3.1: "trim" for trim-solver groups (members are iterations). */
+  kind?: "sweep" | "trim";
   wind_speed: number;
   quality: Quality;
   runs: GroupMember[];
+  /** v3.1: present for trim groups (partial while iterating). */
+  trim?: TrimSummary;
 }
 
 /** GET /api/runs/{id}/log?tail=N */

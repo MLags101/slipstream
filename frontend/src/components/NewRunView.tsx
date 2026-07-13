@@ -35,6 +35,10 @@ export function NewRunView({ onCreated }: Props) {
   const [propRows, setPropRows] = useState<
     { x: string; y: string; z: string; d: string; t: string }[]
   >([{ x: "0", y: "0", z: "0", d: "127", t: "300" }]);
+  const [trimEnabled, setTrimEnabled] = useState(false);
+  const [trimWeight, setTrimWeight] = useState("650");
+  // Trim solves pitch + per-prop thrust itself; only live with prop disks.
+  const trimOn = propsEnabled && trimEnabled;
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -43,6 +47,8 @@ export function NewRunView({ onCreated }: Props) {
   const canvasHostRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const stlCenterRef = useRef<THREE.Vector3>(new THREE.Vector3());
+  const framedRef = useRef(false);
 
   // Viewer lifecycle — created once the preview host exists.
   useEffect(() => {
@@ -51,7 +57,7 @@ export function NewRunView({ onCreated }: Props) {
     if (!host) return;
     const viewer = createViewer(host);
     viewerRef.current = viewer;
-    if (geometryRef.current) showGeometry(viewer, geometryRef.current);
+    framedRef.current = false;
     return () => {
       viewer.dispose();
       viewerRef.current = null;
@@ -59,19 +65,84 @@ export function NewRunView({ onCreated }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file !== null]);
 
-  const showGeometry = (viewer: Viewer, geometry: THREE.BufferGeometry) => {
+  // Live setup preview: the model (and its prop disks) rotate exactly as the
+  // backend will prepare them — pitch about Y, then -yaw about Z — while the
+  // wind arrows stay fixed along +X, like the real tunnel.
+  const previewYaw =
+    sweepEnabled && sweepParam === "yaw" ? 0 : parseFloat(yawDeg) || 0;
+  const previewPitch =
+    trimOn || (sweepEnabled && sweepParam === "pitch")
+      ? 0
+      : parseFloat(pitchDeg) || 0;
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const geometry = geometryRef.current;
+    if (!viewer || !geometry || !file) return;
     geometry.computeBoundingSphere();
     const sphere = geometry.boundingSphere ?? new THREE.Sphere();
-    const group = new THREE.Group();
-    const mesh = new THREE.Mesh(
-      geometry,
-      new THREE.MeshStandardMaterial({ color: 0x9fa8b3, roughness: 0.6, metalness: 0.15 }),
+    const r = Math.max(sphere.radius, 1e-6);
+
+    const modelGroup = new THREE.Group();
+    modelGroup.add(
+      new THREE.Mesh(
+        geometry,
+        new THREE.MeshStandardMaterial({
+          color: 0x9fa8b3,
+          roughness: 0.6,
+          metalness: 0.15,
+        }),
+      ),
     );
-    group.add(mesh);
-    group.add(buildSceneHelpers(sphere.radius, sphere.center));
+
+    // Propeller disks, in the model frame so they rotate with it.
+    if (propsEnabled) {
+      const c = stlCenterRef.current;
+      for (const row of propRows) {
+        const [x, y, z, d] = [row.x, row.y, row.z, row.d].map((v) =>
+          parseFloat(v),
+        );
+        if (![x, y, z, d].every(Number.isFinite) || d <= 0) continue;
+        const disk = new THREE.Mesh(
+          new THREE.CylinderGeometry(d / 2, d / 2, Math.max(d * 0.05, r * 0.008), 32),
+          new THREE.MeshBasicMaterial({
+            color: 0x35c5dd,
+            transparent: true,
+            opacity: 0.28,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+          }),
+        );
+        disk.rotation.x = Math.PI / 2; // cylinder axis Y -> model +Z
+        disk.position.set(x - c.x, y - c.y, z - c.z);
+        modelGroup.add(disk);
+        const thrust = new THREE.ArrowHelper(
+          new THREE.Vector3(0, 0, 1),
+          disk.position,
+          d * 0.45,
+          0x35c5dd,
+          d * 0.14,
+          d * 0.07,
+        );
+        modelGroup.add(thrust);
+      }
+    }
+
+    // Backend prep order: R = Rz(-yaw) · Ry(pitch). Euler "ZYX" composes
+    // exactly Rz(z)·Ry(y)·Rx(x).
+    modelGroup.rotation.order = "ZYX";
+    modelGroup.rotation.y = THREE.MathUtils.degToRad(previewPitch);
+    modelGroup.rotation.z = -THREE.MathUtils.degToRad(previewYaw);
+
+    const group = new THREE.Group();
+    group.add(modelGroup);
+    group.add(buildSceneHelpers(r, new THREE.Vector3(0, 0, 0)));
     viewer.setContent(group);
-    viewer.frame(sphere.center, sphere.radius);
-  };
+    if (!framedRef.current) {
+      viewer.frame(new THREE.Vector3(0, 0, 0), r);
+      framedRef.current = true;
+    }
+  }, [file, propsEnabled, propRows, previewYaw, previewPitch]);
 
   const acceptFile = useCallback(async (f: File) => {
     setParseError(null);
@@ -83,12 +154,16 @@ export function NewRunView({ onCreated }: Props) {
       const buf = await f.arrayBuffer();
       const geometry = new STLLoader().parse(buf);
       geometry.computeVertexNormals();
+      geometry.computeBoundingBox();
+      const c = geometry.boundingBox!.getCenter(new THREE.Vector3());
+      geometry.translate(-c.x, -c.y, -c.z);
+      stlCenterRef.current = c;
+      framedRef.current = false;
       geometryRef.current = geometry;
       setTriangles(geometry.getAttribute("position").count / 3);
       setFile(f);
       setName(nameFromFilename(f.name));
       setSubmitError(null);
-      if (viewerRef.current) showGeometry(viewerRef.current, geometry);
     } catch (e) {
       setParseError(`Could not parse STL: ${(e as Error).message}`);
     }
@@ -128,10 +203,20 @@ export function NewRunView({ onCreated }: Props) {
       }
       sweep = angles;
     }
+    let trimCfg: RunConfig["trim"];
+    if (trimOn) {
+      const w = parseFloat(trimWeight);
+      if (!Number.isFinite(w) || w <= 0) {
+        setSubmitError("Craft weight must be a positive number of grams");
+        return;
+      }
+      trimCfg = { weight_g: w };
+    }
     const yawSwept = sweepEnabled && sweepParam === "yaw";
     const pitchSwept = sweepEnabled && sweepParam === "pitch";
     const yaw = yawSwept ? 0 : parseFloat(yawDeg);
-    const pitch = pitchSwept ? 0 : parseFloat(pitchDeg);
+    // The trim solver owns pitch; the value sent is ignored/overridden.
+    const pitch = pitchSwept || trimOn ? 0 : parseFloat(pitchDeg);
     if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) {
       setSubmitError("Yaw and pitch must be numbers");
       return;
@@ -165,6 +250,7 @@ export function NewRunView({ onCreated }: Props) {
       ...(yawSwept ? { yaw_sweep: sweep } : {}),
       ...(pitchSwept ? { pitch_sweep: sweep } : {}),
       ...(props && props.length ? { props } : {}),
+      ...(trimCfg ? { trim: trimCfg } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -333,16 +419,19 @@ export function NewRunView({ onCreated }: Props) {
                   title="2–8 comma-separated pitch angles in degrees"
                 />
               ) : (
-                <input
-                  type="number"
-                  value={pitchDeg}
-                  onChange={(e) => setPitchDeg(e.target.value)}
-                  min={-90}
-                  max={90}
-                  step="any"
-                  disabled={!file}
-                  title="positive pitch = nose-down forward-flight tilt"
-                />
+                <>
+                  <input
+                    type="number"
+                    value={pitchDeg}
+                    onChange={(e) => setPitchDeg(e.target.value)}
+                    min={-90}
+                    max={90}
+                    step="any"
+                    disabled={!file || trimOn}
+                    title="positive pitch = nose-down forward-flight tilt"
+                  />
+                  {trimOn && <span className="config-note">solved by trim</span>}
+                </>
               )}
             </label>
           </div>
@@ -351,7 +440,8 @@ export function NewRunView({ onCreated }: Props) {
               type="checkbox"
               checked={sweepEnabled}
               onChange={(e) => setSweepEnabled(e.target.checked)}
-              disabled={!file}
+              disabled={!file || trimOn}
+              title={trimOn ? "unavailable while solving trim" : undefined}
             />
             <span>Sweep — queue one run per angle of</span>
             <select
@@ -386,6 +476,10 @@ export function NewRunView({ onCreated }: Props) {
                       key={k}
                       type="number"
                       step="any"
+                      disabled={k === "t" && trimOn}
+                      title={
+                        k === "t" && trimOn ? "solved by trim" : undefined
+                      }
                       value={r[k]}
                       onChange={(e) =>
                         setPropRows((rows) =>
@@ -424,8 +518,37 @@ export function NewRunView({ onCreated }: Props) {
                 </button>
                 <span className="config-note">
                   positions/ø in STL units · thrust axis = model +Z
+                  {trimOn && " · thrust solved by trim"}
                 </span>
               </div>
+              <label className="check-field">
+                <input
+                  type="checkbox"
+                  checked={trimEnabled}
+                  onChange={(e) => {
+                    setTrimEnabled(e.target.checked);
+                    if (e.target.checked) setSweepEnabled(false);
+                  }}
+                />
+                <span>Solve trim attitude</span>
+              </label>
+              {trimEnabled && (
+                <label className="field">
+                  <span className="field-label">Craft weight (g)</span>
+                  <input
+                    type="number"
+                    className="mono"
+                    value={trimWeight}
+                    onChange={(e) => setTrimWeight(e.target.value)}
+                    min={1}
+                    step="any"
+                  />
+                  <span className="config-note">
+                    iterates pitch + per-prop thrust until thrust balances
+                    drag and weight
+                  </span>
+                </label>
+              )}
             </div>
           )}
           <label className="field">
@@ -451,9 +574,11 @@ export function NewRunView({ onCreated }: Props) {
         >
           {submitting
             ? "Starting…"
-            : sweepEnabled
-              ? `Run ${sweepParam} sweep`
-              : "Run analysis"}
+            : trimOn
+              ? "Run trim solve"
+              : sweepEnabled
+                ? `Run ${sweepParam} sweep`
+                : "Run analysis"}
         </button>
         <div className="config-note">
           Runs execute one at a time — a new run queues behind any active one.

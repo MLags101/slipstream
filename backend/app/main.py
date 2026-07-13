@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import foamcase, ondemand, post
+from . import foamcase, ondemand, post, trim
 from .runner import Runner
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "runs"
@@ -21,6 +21,11 @@ runner = Runner(DATA_DIR)
 
 VALID_UNITS = {"mm", "cm", "m", "in"}
 VALID_QUALITY = {"coarse", "medium", "fine"}
+
+
+def _num(v) -> bool:
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(v))
 
 
 def _get_state(run_id: str) -> dict:
@@ -57,9 +62,6 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
 
     props = cfg.get("props")
     if props is not None:
-        def _num(v):
-            return (isinstance(v, (int, float)) and not isinstance(v, bool)
-                    and math.isfinite(v))
         if (not isinstance(props, list) or len(props) > 8 or not all(
                 isinstance(p, dict)
                 and isinstance(p.get("center"), list) and len(p["center"]) == 3
@@ -85,9 +87,32 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
             raise HTTPException(
                 422, f"{p}_sweep must be a list of 2-8 finite numbers (degrees)")
 
+    trim_req = cfg.get("trim")
+    if trim_req is not None:
+        if not isinstance(trim_req, dict) or not _num(trim_req.get("weight_g")) \
+                or trim_req["weight_g"] <= 0:
+            raise HTTPException(
+                422, "trim.weight_g must be a positive number (grams)")
+        if not cfg.get("props"):
+            raise HTTPException(
+                422, "trim requires at least one propeller disk (props)")
+        if sweeps:
+            raise HTTPException(422, "trim cannot be combined with a sweep")
+        mi = trim_req.get("max_iters", trim.DEFAULT_MAX_ITERS)
+        td = trim_req.get("tol_deg", trim.DEFAULT_TOL_DEG)
+        if not (isinstance(mi, int) and not isinstance(mi, bool) and 1 <= mi <= 10):
+            raise HTTPException(422, "trim.max_iters must be an integer in [1, 10]")
+        if not _num(td) or td <= 0:
+            raise HTTPException(422, "trim.tol_deg must be a positive number")
+
     data = await stl.read()
     if len(data) < 84:
         raise HTTPException(422, "uploaded file does not look like an STL")
+
+    if trim_req is not None:
+        cfg["trim"] = {"weight_g": float(trim_req["weight_g"]),
+                       "max_iters": mi, "tol_deg": float(td)}
+        return _submit_trim(data, cfg)
 
     if not sweeps:
         return {"id": _submit_run(data, cfg)}
@@ -131,6 +156,30 @@ def _submit_run(stl_bytes: bytes, cfg: dict, group_id: str | None = None) -> str
     }
     runner.submit(state)
     return run_id
+
+
+def _submit_trim(stl_bytes: bytes, cfg: dict) -> dict:
+    """Submit the first trim iteration and start its controller thread."""
+    trim_cfg = cfg["trim"]
+    group_id = uuid.uuid4().hex
+    theta1 = trim.initial_pitch_rad(trim_cfg["weight_g"])
+    tg = trim.thrust_g_per_prop(trim_cfg["weight_g"], 0.0, theta1,
+                                len(cfg["props"]))
+    first_cfg = dict(cfg)
+    first_cfg["pitch_deg"] = math.degrees(theta1)
+    first_cfg["props"] = [dict(p, thrust_g=tg) for p in cfg["props"]]
+    first_cfg["name"] = f"{cfg['name']} @ trim 1"
+    first_cfg["sweep_param"] = "pitch"
+    first_id = _submit_run(stl_bytes, first_cfg, group_id=group_id)
+
+    controller = trim.TrimController(
+        runner=runner,
+        submit=lambda c: _submit_run(stl_bytes, c, group_id=group_id),
+        base_cfg=cfg, trim_cfg=trim_cfg, group_id=group_id,
+        first_run_id=first_id, first_pitch_rad=theta1,
+        summary_dir=DATA_DIR / first_id)
+    controller.start()
+    return {"id": first_id, "group_id": group_id, "ids": [first_id]}
 
 
 @app.get("/api/runs")
@@ -208,7 +257,11 @@ def get_group(group_id: str):
     if not members:
         raise HTTPException(404, "group not found")
     param = members[0]["config"].get("sweep_param", "yaw")
-    members.sort(key=lambda s: float(s["config"].get(f"{param}_deg") or 0))
+    is_trim = any(s["config"].get("trim") for s in members)
+    if is_trim:  # trim iterations in submission order, not angle order
+        members.sort(key=lambda s: s["created_at"])
+    else:
+        members.sort(key=lambda s: float(s["config"].get(f"{param}_deg") or 0))
     first = members[0]
     runs = []
     for s in members:
@@ -225,14 +278,29 @@ def get_group(group_id: str):
         })
     # Members are named "<base> @ N°"; the group carries the base name.
     name = first["name"].rsplit(" @ ", 1)[0]
-    return {
+    out = {
         "group_id": group_id,
         "name": name,
         "param": param,
+        "kind": "trim" if is_trim else "sweep",
         "wind_speed": first["config"].get("wind_speed"),
         "quality": first["config"].get("quality"),
         "runs": runs,
     }
+    if is_trim:
+        summary = None
+        for s in members:
+            p = DATA_DIR / s["id"] / "trim_summary.json"
+            if p.exists():
+                try:
+                    summary = json.loads(p.read_text())
+                except (OSError, json.JSONDecodeError):
+                    summary = None
+                break
+        # No summary yet (still trimming, or controller lost to a restart):
+        # report partial progress.
+        out["trim"] = summary or {"converged": None, "iterations": len(members)}
+    return out
 
 
 @app.get("/api/runs/{run_id}/stl")
