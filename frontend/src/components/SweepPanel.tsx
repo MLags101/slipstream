@@ -46,7 +46,8 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
 
   const param = group.param ?? "yaw";
   const isTrim = group.kind === "trim";
-  const angleOf = (m: (typeof group.runs)[number]) => m.angle ?? m.yaw_deg;
+  const angleOf = (m: (typeof group.runs)[number]) =>
+    Math.round((m.angle ?? m.yaw_deg) * 100) / 100;
   // Trim members arrive in iteration order — keep it. Sweeps sort by angle.
   const members = isTrim
     ? [...group.runs]
