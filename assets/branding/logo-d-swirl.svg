@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs><clipPath id="sq"><rect x="80" y="80" width="864" height="864" rx="190"/></clipPath></defs>
+  <g clip-path="url(#sq)">
+    <rect x="80" y="80" width="864" height="864" fill="#0b0c0e"/>
+    <!-- single elegant spiral vortex, tightening line weight -->
+    <g fill="none" stroke-linecap="round">
+      <path d="M 140 512 C 300 512 380 480 470 452" stroke="#35c5dd" stroke-width="40"/>
+      <path d="M 470 452 A 150 150 0 1 1 400 700" stroke="#35c5dd" stroke-width="40"/>
+      <path d="M 400 700 A 105 105 0 1 1 610 640" stroke="#4fd0e6" stroke-width="30"/>
+      <path d="M 610 640 A 66 66 0 1 0 520 560" stroke="#7adceb" stroke-width="22"/>
+      <circle cx="562" cy="590" r="16" fill="#f0b429" stroke="none"/>
+    </g>
+  </g>
+</svg>

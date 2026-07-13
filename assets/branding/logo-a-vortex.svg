@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs><clipPath id="sq"><rect x="80" y="80" width="864" height="864" rx="190"/></clipPath></defs>
+  <g clip-path="url(#sq)">
+    <rect x="80" y="80" width="864" height="864" fill="#0d1117"/>
+    <!-- von Karman vortex street: body + alternating swirls -->
+    <circle cx="270" cy="512" r="95" fill="#e7e9ec"/>
+    <g fill="none" stroke-linecap="round" stroke-width="30">
+      <path d="M 430 400 a 62 62 0 1 1 62 62" stroke="#35c5dd"/>
+      <path d="M 560 624 a 62 62 0 1 0 62 -62" stroke="#f0b429"/>
+      <path d="M 690 400 a 62 62 0 1 1 62 62" stroke="#35c5dd" stroke-opacity="0.75"/>
+      <path d="M 820 624 a 62 62 0 1 0 62 -62" stroke="#f0b429" stroke-opacity="0.75"/>
+    </g>
+  </g>
+</svg>

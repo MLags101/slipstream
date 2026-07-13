@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs><clipPath id="sq"><rect x="80" y="80" width="864" height="864" rx="190"/></clipPath></defs>
+  <g clip-path="url(#sq)">
+    <rect x="80" y="80" width="864" height="864" fill="#f0b429"/>
+    <!-- bold dark delta with a clean wake -->
+    <path d="M 300 300 L 730 512 L 300 724 L 400 512 Z" fill="#0b0c0e"/>
+    <g stroke="#0b0c0e" stroke-width="26" stroke-linecap="round" fill="none">
+      <path d="M 760 512 H 880" stroke-opacity="0.9"/>
+      <path d="M 720 420 H 810" stroke-opacity="0.55"/>
+      <path d="M 720 604 H 810" stroke-opacity="0.55"/>
+    </g>
+  </g>
+</svg>
