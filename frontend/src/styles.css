@@ -1561,3 +1561,18 @@ body {
   padding: 0 6px;
   margin-right: 6px;
 }
+
+.dropzone-sample {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.dropzone-sample:hover {
+  color: #5fd7ea;
+}

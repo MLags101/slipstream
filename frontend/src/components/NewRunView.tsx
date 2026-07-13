@@ -306,7 +306,24 @@ export function NewRunView({ onCreated }: Props) {
           >
             <div className="dropzone-glyph">▲</div>
             <div className="dropzone-title">Drop an STL here</div>
-            <div className="dropzone-sub">or click to browse</div>
+            <div className="dropzone-sub">
+              or click to browse ·{" "}
+              <button
+                type="button"
+                className="dropzone-sample"
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  const buf = await (await fetch("/quad_frame.stl")).blob();
+                  void acceptFile(
+                    new File([buf], "quad_frame.stl", {
+                      type: "application/octet-stream",
+                    }),
+                  );
+                }}
+              >
+                try the sample quad
+              </button>
+            </div>
             <div className="dropzone-steps">
               <span><i>1</i> drop your STL</span>
               <span><i>2</i> set wind speed &amp; quality</span>
