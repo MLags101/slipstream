@@ -307,22 +307,33 @@ export function NewRunView({ onCreated }: Props) {
             <div className="dropzone-glyph">▲</div>
             <div className="dropzone-title">Drop an STL here</div>
             <div className="dropzone-sub">
-              or click to browse ·{" "}
-              <button
-                type="button"
-                className="dropzone-sample"
-                onClick={async (e) => {
-                  e.stopPropagation();
-                  const buf = await (await fetch("/quad_frame.stl")).blob();
-                  void acceptFile(
-                    new File([buf], "quad_frame.stl", {
-                      type: "application/octet-stream",
-                    }),
-                  );
-                }}
-              >
-                try the sample quad
-              </button>
+              or click to browse · try a sample:{" "}
+              {(
+                [
+                  ["quad", "/quad_frame.stl"],
+                  ["car", "/sample_car.stl"],
+                  ["wing", "/sample_wing.stl"],
+                ] as [string, string][]
+              ).map(([label, url], i) => (
+                <span key={label}>
+                  {i > 0 && " · "}
+                  <button
+                    type="button"
+                    className="dropzone-sample"
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      const buf = await (await fetch(url)).blob();
+                      void acceptFile(
+                        new File([buf], url.slice(1), {
+                          type: "application/octet-stream",
+                        }),
+                      );
+                    }}
+                  >
+                    {label}
+                  </button>
+                </span>
+              ))}
             </div>
             <div className="dropzone-steps">
               <span><i>1</i> drop your STL</span>

@@ -4,8 +4,10 @@
 
 **Drop in an STL. Get a wind tunnel analysis. Free, local, yours.**
 
-WindTunnel is a desktop virtual wind tunnel for makers — drone frames, RC planes,
-fairings, anything you can export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
+WindTunnel is a desktop virtual wind tunnel for anyone with a shape and a question:
+RC planes and multirotors, model cars, bike and motorcycle fairings, spoilers and
+cowlings, pinewood derby racers, boat hulls, architectural models — anything you can
+export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
 (the industry-standard open-source CFD solver) in a one-window app: no dictionaries,
 no meshing tutorials, no cloud fees.
 
@@ -15,9 +17,9 @@ no meshing tutorials, no cloud fees.
   pressure-vs-viscous drag breakdown, convergence quality
 - **See the flow**: surface pressure maps, movable flow slices on all three axes
   (with sweep animation), velocity-colored streamlines
-- **Go further**: yaw/pitch sweeps with polar charts, two-run comparison,
-  propeller actuator disks for powered flow, and an auto-**trim solver** that finds
-  the forward-flight attitude and per-motor thrust for a given weight and speed
+- **Go further**: yaw/pitch sweeps with angle charts, two-run comparison, and — for
+  aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
+  that finds the forward-flight attitude and per-motor thrust for weight and speed
 - Runs **auto-stop when converged**, saving 30–40% of solve time
 
 ## Getting started (3 steps)
