@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import time
 import uuid
@@ -14,7 +15,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from . import foamcase, ondemand, post, trim
 from .runner import Runner
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "runs"
+DATA_DIR = Path(
+    os.environ.get("WINDTUNNEL_DATA_DIR")
+    or Path(__file__).resolve().parent.parent / "data"
+) / "runs"
 
 app = FastAPI(title="WindTunnel backend")
 runner = Runner(DATA_DIR)
@@ -33,6 +37,13 @@ def _get_state(run_id: str) -> dict:
     if state is None:
         raise HTTPException(404, "run not found")
     return state
+
+
+@app.get("/api/health")
+def health():
+    from .foamenv import find_openfoam
+    p = find_openfoam()
+    return {"ok": True, "openfoam": p, "data_dir": str(DATA_DIR)}
 
 
 @app.post("/api/runs", status_code=201)
@@ -377,3 +388,10 @@ def delete_run(run_id: str):
     runner.delete(run_id)
     shutil.rmtree(DATA_DIR / run_id, ignore_errors=True)
     return JSONResponse({"deleted": run_id})
+
+
+# Desktop/app mode: serve the built frontend when WINDTUNNEL_STATIC is set.
+_static = os.environ.get("WINDTUNNEL_STATIC")
+if _static and Path(_static).is_dir():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=_static, html=True), name="ui")

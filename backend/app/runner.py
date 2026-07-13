@@ -20,10 +20,7 @@ import traceback
 from pathlib import Path
 
 from . import foamcase, geometry, post
-
-OPENFOAM = "/opt/homebrew/bin/openfoam"
-if not os.path.exists(OPENFOAM):
-    OPENFOAM = "openfoam"  # fall back to PATH
+from .foamenv import OPENFOAM
 
 TERMINAL = ("done", "error")
 

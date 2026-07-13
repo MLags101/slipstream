@@ -73,8 +73,38 @@ export default function App() {
 
   const openRun = useCallback((id: string) => setRoute({ view: "run", id }), []);
 
+  // Warn if OpenFOAM isn't installed (fresh machines / packaged app).
+  const [foamMissing, setFoamMissing] = useState(false);
+  useEffect(() => {
+    let stop = false;
+    const check = async () => {
+      try {
+        const r = await fetch("/api/health");
+        const h = await r.json();
+        if (!stop) setFoamMissing(h.openfoam === null);
+      } catch {
+        /* backend-down banner covers this */
+      }
+    };
+    void check();
+    const t = setInterval(check, 30000);
+    return () => {
+      stop = true;
+      clearInterval(t);
+    };
+  }, []);
+
   return (
     <div className="app">
+      {foamMissing && !backendDown && (
+        <div className="banner-down">
+          OpenFOAM not found — runs will fail. Install it with{" "}
+          <span className="mono">
+            brew install --cask gerlero/openfoam/openfoam
+          </span>{" "}
+          then relaunch.
+        </div>
+      )}
       {backendDown && (
         <div className="banner-down">
           Backend unreachable — retrying. Start the server on{" "}

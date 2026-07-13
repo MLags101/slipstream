@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 
 from . import post
+from .foamenv import OPENFOAM
 
 # postProcess mutates system/ and postProcessing/ inside a case; serialize.
 _LOCK = threading.Lock()
@@ -71,7 +72,7 @@ POINTS
 def _run_postprocess(case: Path, func: str) -> None:
     cmd = (f'cd "{case}" && postProcess -func {func} -latestTime '
            f"> log.postProcess.{func} 2>&1")
-    subprocess.run(["openfoam", "-c", cmd], capture_output=True, timeout=600)
+    subprocess.run([OPENFOAM, "-c", cmd], capture_output=True, timeout=600)
 
 
 def _latest_vtk(case: Path, func: str) -> Path | None:
