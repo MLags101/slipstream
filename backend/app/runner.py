@@ -257,8 +257,8 @@ class Runner:
             log = (case / "log.topoSet").read_text(errors="replace")
             import re as _re
             counts = [int(m.group(1)) for m in
-                      _re.finditer(r"Added (\d+) cells", log)]
-            if counts and min(counts) == 0:
+                      _re.finditer(r"cellZoneSet disk\d+ now size (\d+)", log)]
+            if not counts or min(counts) == 0:
                 raise RuntimeError(
                     "a propeller disk selected 0 mesh cells - check its "
                     "position/diameter against the model (see log.topoSet)")
