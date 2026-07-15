@@ -10,6 +10,7 @@ Each run lives in data/runs/<id>/ with:
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import re
@@ -22,7 +23,13 @@ from pathlib import Path
 from . import foamcase, geometry, post
 from .foamenv import OPENFOAM
 
-TERMINAL = ("done", "error")
+import signal
+
+TERMINAL = ("done", "error", "cancelled")
+
+
+class _Cancelled(Exception):
+    """Raised inside the pipeline when the user cancels a run."""
 
 
 class Runner:
@@ -33,6 +40,8 @@ class Runner:
         self.states: dict[str, dict] = {}
         self.queue: queue.Queue[str] = queue.Queue()
         self.current: str | None = None
+        self._proc: subprocess.Popen | None = None  # currently running OF stage
+        self._cancel: set[str] = set()              # run ids requested to cancel
         self._load_existing()
         # Nothing is solving at startup, so any leftover per-processor
         # decomposition is dead weight — reclaim it (harmless, ~45%/run).
@@ -116,9 +125,20 @@ class Runner:
             with self.lock:
                 if run_id not in self.states:  # deleted while queued
                     continue
+                if run_id in self._cancel:      # cancelled before it started
+                    self._cancel.discard(run_id)
+                    self.update(run_id, status="cancelled", progress=0.0,
+                                message="Cancelled")
+                    continue
                 self.current = run_id
             try:
                 self._execute(run_id)
+            except _Cancelled:
+                try:
+                    self.update(run_id, status="cancelled",
+                                message="Cancelled by user", error=None)
+                except KeyError:
+                    pass
             except Exception as exc:  # noqa: BLE001
                 traceback.print_exc()
                 try:
@@ -128,7 +148,22 @@ class Runner:
                     pass
             finally:
                 with self.lock:
+                    self._cancel.discard(run_id)
                     self.current = None
+
+    def cancel(self, run_id: str) -> bool:
+        """Request cancellation. Running: signals the pipeline to stop. Queued:
+        marked cancelled at once (and skipped when dequeued). Returns False if
+        already finished."""
+        with self.lock:
+            s = self.states.get(run_id)
+            if s is None or s["status"] in TERMINAL:
+                return False
+            self._cancel.add(run_id)
+            if run_id != self.current:  # queued, not yet running
+                self.update(run_id, status="cancelled", progress=0.0,
+                            message="Cancelled")
+            return True
 
     def _foam(self, case: Path, cmd: str, log_name: str, run_id: str,
               progress_cb=None, check: bool = True) -> int:
@@ -136,16 +171,40 @@ class Runner:
         self.update(run_id, log=log_name)
         log_path = case / log_name
         shell = f"cd '{case}' && {cmd} > '{log_path}' 2>&1"
-        proc = subprocess.Popen([OPENFOAM, "-c", shell])
-        while proc.poll() is None:
-            time.sleep(1.0)
-            if progress_cb:
-                progress_cb()
+        # New session -> its own process group, so cancel can kill the whole
+        # mpirun/solver tree in one signal.
+        proc = subprocess.Popen([OPENFOAM, "-c", shell], start_new_session=True)
+        self._proc = proc
+        try:
+            while proc.poll() is None:
+                time.sleep(1.0)
+                if run_id in self._cancel:
+                    self._kill_proc(proc)
+                    raise _Cancelled()
+                if progress_cb:
+                    progress_cb()  # may raise (divergence) — kill happens there
+        finally:
+            self._proc = None
         if check and proc.returncode != 0:
             tail = self._log_tail(log_path, 30)
             raise RuntimeError(f"{cmd.split()[0]} failed (exit {proc.returncode}). "
                                f"Log tail:\n{tail}")
         return proc.returncode
+
+    @staticmethod
+    def _kill_proc(proc: subprocess.Popen) -> None:
+        """Terminate a stage's whole process group."""
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                proc.kill()
 
     @staticmethod
     def _log_tail(path: Path, n: int) -> str:
@@ -279,6 +338,16 @@ class Runner:
             hist = post.read_history(case)
             if hist["iters"]:
                 it = int(hist["iters"][-1])
+                # Divergence guard: a blown-up or non-finite Cd means the solve
+                # is producing garbage — stop now with a useful message.
+                cd_last = hist["cd"][-1] if hist["cd"] else 0.0
+                if not math.isfinite(cd_last) or abs(cd_last) > 1e4:
+                    if self._proc is not None:
+                        self._kill_proc(self._proc)
+                    raise RuntimeError(
+                        f"solution diverged at iteration {it} (Cd={cd_last:.3g}). "
+                        "Try a finer mesh, a lower wind speed, or check the STL "
+                        "for holes/self-intersections.")
                 frac = min(1.0, it / iterations)
                 suffix = " - converged, stopping early" if stop["requested"] else ""
                 self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),

@@ -16,6 +16,8 @@ interface Props {
   onUnreachable: (down: boolean) => void;
   /** Navigate to a sibling run (yaw sweep member list). */
   onSelectRun: (id: string) => void;
+  /** Resubmit this run's exact config as a new run. */
+  onRerun: (id: string) => void;
 }
 
 // Chart series colors — validated 4-slot dark categorical palette.
@@ -24,8 +26,15 @@ const C_AQUA = "#199e70";
 const C_YELLOW = "#c98500";
 const C_VIOLET = "#9085e9";
 
-export function RunDetailView({ id, onDelete, onUnreachable, onSelectRun }: Props) {
+export function RunDetailView({
+  id,
+  onDelete,
+  onUnreachable,
+  onSelectRun,
+  onRerun,
+}: Props) {
   const fetchRun = useCallback(() => api.getRun(id), [id]);
+  const [cancelling, setCancelling] = useState(false);
 
   const [snapshot, setSnapshot] = useState<RunDetail | null>(null);
   const terminal = snapshot !== null && isTerminal(snapshot.status);
@@ -111,15 +120,47 @@ export function RunDetailView({ id, onDelete, onUnreachable, onSelectRun }: Prop
           {run.config.wind_speed} m/s · yaw {run.config.yaw_deg}° · {run.config.quality}
           {run.model && ` · ${run.model.triangles.toLocaleString("en-US")} tris`}
         </div>
-        <button className="btn btn-danger btn-sm" onClick={() => onDelete(id)}>
-          Delete
-        </button>
+        <div className="detail-actions">
+          {running && (
+            <button
+              className="btn btn-danger btn-sm"
+              disabled={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                try {
+                  await api.cancelRun(id);
+                } finally {
+                  setCancelling(false);
+                }
+              }}
+            >
+              {cancelling ? "Cancelling…" : "Cancel"}
+            </button>
+          )}
+          {terminal && (
+            <button className="btn btn-sm" onClick={() => onRerun(id)}>
+              Re-run
+            </button>
+          )}
+          <button className="btn btn-danger btn-sm" onClick={() => onDelete(id)}>
+            Delete
+          </button>
+        </div>
       </header>
 
-      {run.status === "error" && (
-        <div className="error-banner">
-          <div className="error-title">Run failed</div>
-          <div className="mono">{run.error ?? "unknown error"}</div>
+      {run.model?.watertight === false && (
+        <div className="warn-banner">
+          ⚠ This STL isn't watertight (open or non-manifold surface). It may mesh
+          poorly or fail — consider repairing it in your CAD/slicer.
+        </div>
+      )}
+
+      {(run.status === "error" || run.status === "cancelled") && (
+        <div className={`error-banner${run.status === "cancelled" ? " cancel-banner" : ""}`}>
+          <div className="error-title">
+            {run.status === "cancelled" ? "Run cancelled" : "Run failed"}
+          </div>
+          {run.error && <div className="mono">{run.error}</div>}
         </div>
       )}
 

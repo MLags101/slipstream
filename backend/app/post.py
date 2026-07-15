@@ -105,6 +105,32 @@ def drag_breakdown(case_dir: str | Path) -> tuple[float | None, float | None]:
             float(np.mean(forces["viscous_x"][win])))
 
 
+def parse_mesh_quality(check_log: str | Path) -> dict:
+    """Pull max non-orthogonality, max skewness and the OK/failed verdict from a
+    checkMesh log. Returns {} if the log is missing/unparsable."""
+    try:
+        text = Path(check_log).read_text(errors="replace")
+    except OSError:
+        return {}
+    out: dict = {}
+    m = re.search(r"non-orthogonality Max:\s*([\d.eE+-]+)", text)
+    if m:
+        out["max_non_ortho"] = float(m.group(1))
+    m = re.search(r"[Mm]ax skewness\s*=\s*([\d.eE+-]+)", text)
+    if m:
+        out["max_skewness"] = float(m.group(1))
+    if "Mesh OK" in text:
+        out["ok"] = True
+    elif re.search(r"Failed \d+ mesh check", text):
+        out["ok"] = False
+    # Simple verdict: OpenFOAM flags non-ortho > 70 and skewness > 4 as poor.
+    no = out.get("max_non_ortho", 0.0)
+    sk = out.get("max_skewness", 0.0)
+    out["rating"] = "poor" if (no > 70 or sk > 4) else (
+        "fair" if (no > 60 or sk > 2.5) else "good")
+    return out
+
+
 def compute_result(case_dir: str | Path, config: dict, model: dict,
                    mesh_cells: int | None, runtime_s: float,
                    stopped_early: bool = False) -> dict:
@@ -129,6 +155,12 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     ref_area = float(ref_cm2) / 1e4 if ref_cm2 else frontal
     qdyn = 0.5 * rho * u * u * ref_area
     drag_pressure, drag_viscous = drag_breakdown(case_dir)
+    # Reynolds number on the model's streamwise length (the lRef used for
+    # coefficients), so users can sanity-check the flow regime.
+    (bx0, _, _), (bx1, _, _) = model["bbox_m"]
+    length = max(bx1 - bx0, 1e-9)
+    nu = float(config.get("nu") or 1.5e-5)
+    reynolds = u * length / nu
     return {
         "cd": cd, "cl": cl, "cs": cs,
         "drag_N": cd * qdyn, "lift_N": cl * qdyn, "side_N": cs * qdyn,
@@ -139,6 +171,8 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
         "mesh_cells": mesh_cells,
         "runtime_s": round(runtime_s, 1),
         "cd_std_last20pct": float(np.std(coeffs["Cd"][win])),
+        "reynolds": reynolds,
+        "mesh_quality": parse_mesh_quality(Path(case_dir) / "log.checkMesh"),
         "stopped_early": bool(stopped_early),
     }
 

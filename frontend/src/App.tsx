@@ -73,6 +73,16 @@ export default function App() {
 
   const openRun = useCallback((id: string) => setRoute({ view: "run", id }), []);
 
+  const handleRerun = useCallback(async (id: string) => {
+    try {
+      const { id: newId } = await api.rerunRun(id);
+      setRefresh((n) => n + 1);
+      setRoute({ view: "run", id: newId });
+    } catch (e) {
+      window.alert(`Re-run failed: ${(e as Error).message}`);
+    }
+  }, []);
+
   // Warn if OpenFOAM isn't installed (fresh machines / packaged app).
   const [foamMissing, setFoamMissing] = useState(false);
   useEffect(() => {
@@ -150,6 +160,7 @@ export default function App() {
               onDelete={handleDelete}
               onUnreachable={setDetailUnreachable}
               onSelectRun={openRun}
+              onRerun={handleRerun}
             />
           )}
         </main>

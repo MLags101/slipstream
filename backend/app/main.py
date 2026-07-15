@@ -480,6 +480,31 @@ def get_viz_streamlines(run_id: str, density: str = "med", region: str = "full")
         raise HTTPException(422, _compacted_msg(s) or str(e))
 
 
+@app.post("/api/runs/{run_id}/cancel")
+def cancel_run(run_id: str):
+    _get_state(run_id)
+    if not runner.cancel(run_id):
+        raise HTTPException(409, "run has already finished")
+    return {"cancelled": run_id}
+
+
+@app.post("/api/runs/{run_id}/rerun", status_code=201)
+def rerun(run_id: str):
+    """Re-submit a run's exact configuration as a new run. Works even on
+    compacted runs (the original STL + config are always kept), so it's the
+    recovery path when you need a fresh mesh to slice again."""
+    _get_state(run_id)
+    rd = DATA_DIR / run_id
+    stl, cfg_path = rd / "model.stl", rd / "config.json"
+    if not stl.exists() or not cfg_path.exists():
+        raise HTTPException(410, "run inputs are no longer available")
+    cfg = json.loads(cfg_path.read_text())
+    # Strip group bookkeeping so it re-runs as a standalone run.
+    for k in ("sweep_param", "trim"):
+        cfg.pop(k, None)
+    return {"id": _submit_run(stl.read_bytes(), cfg, group_id=None)}
+
+
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str):
     _get_state(run_id)

@@ -11,7 +11,8 @@ export type RunStatus =
   | "solving"
   | "postprocessing"
   | "done"
-  | "error";
+  | "error"
+  | "cancelled";
 
 export type StlUnit = "mm" | "cm" | "m" | "in";
 export type Quality = "coarse" | "medium" | "fine";
@@ -86,6 +87,8 @@ export interface ModelInfo {
   domain_bbox_m?: [[number, number, number], [number, number, number]];
   frontal_area_m2: number;
   triangles: number;
+  /** False if the STL isn't a closed, manifold surface (may mesh poorly). */
+  watertight?: boolean;
 }
 
 /** GET /api/runs/{id}/result (also embedded in RunDetail.result when done) */
@@ -110,6 +113,14 @@ export interface RunResult {
   drag_viscous_N: number | null;
   /** v2: true when the solver auto-stopped on Cd convergence. */
   stopped_early: boolean;
+  /** Reynolds number on the model's streamwise length. */
+  reynolds?: number;
+  mesh_quality?: {
+    max_non_ortho?: number;
+    max_skewness?: number;
+    ok?: boolean;
+    rating?: "good" | "fair" | "poor";
+  };
 }
 
 /** GET /api/runs/{id} */
@@ -302,6 +313,15 @@ export const api = {
   async compactRuns(): Promise<{ compacted: string[]; freed_bytes: number }> {
     const res = await request("/runs/compact", { method: "POST" });
     return (await res.json()) as { compacted: string[]; freed_bytes: number };
+  },
+
+  async cancelRun(id: string): Promise<void> {
+    await request(`/runs/${id}/cancel`, { method: "POST" });
+  },
+
+  async rerunRun(id: string): Promise<{ id: string }> {
+    const res = await request(`/runs/${id}/rerun`, { method: "POST" });
+    return (await res.json()) as { id: string };
   },
 
   /** POST /api/runs — multipart: `stl` file + `config` JSON string. */

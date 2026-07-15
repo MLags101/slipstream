@@ -18,6 +18,7 @@ const QUALITY_HINTS: Record<Quality, string> = {
 export function NewRunView({ onCreated }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [triangles, setTriangles] = useState<number | null>(null);
+  const [dims, setDims] = useState<[number, number, number] | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -339,10 +340,12 @@ export function NewRunView({ onCreated }: Props) {
       geometry.computeVertexNormals();
       geometry.computeBoundingBox();
       const c = geometry.boundingBox!.getCenter(new THREE.Vector3());
+      const size = geometry.boundingBox!.getSize(new THREE.Vector3());
       geometry.translate(-c.x, -c.y, -c.z);
       stlCenterRef.current = c;
       framedRef.current = false;
       geometryRef.current = geometry;
+      setDims([size.x, size.y, size.z]);
       setTriangles(geometry.getAttribute("position").count / 3);
       setFile(f);
       setName(nameFromFilename(f.name));
@@ -475,12 +478,18 @@ export function NewRunView({ onCreated }: Props) {
                 onClick={() => {
                   setFile(null);
                   setTriangles(null);
+                  setDims(null);
                   geometryRef.current = null;
                 }}
               >
                 replace
               </button>
             </div>
+            {dims && (
+              <div className="viewer-dims mono" title="model bounding box in the selected unit — check this looks right">
+                {dims.map((d) => (d < 100 ? d.toFixed(1) : Math.round(d)).toString()).join(" × ")} {unit}
+              </div>
+            )}
             <div className="viewer-hint">
               {tool === "rotate"
                 ? "drag to set yaw (\u2194) and pitch (\u2195) \u00b7 wind stays along +X"

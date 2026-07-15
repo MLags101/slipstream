@@ -8,6 +8,7 @@ const LABELS: Record<RunStatus, string> = {
   postprocessing: "post",
   done: "done",
   error: "error",
+  cancelled: "cancelled",
 };
 
 export function StatusPill({ status }: { status: RunStatus }) {
@@ -23,5 +24,5 @@ export const ACTIVE_STATUSES: RunStatus[] = [
 ];
 
 export function isTerminal(status: RunStatus): boolean {
-  return status === "done" || status === "error";
+  return status === "done" || status === "error" || status === "cancelled";
 }

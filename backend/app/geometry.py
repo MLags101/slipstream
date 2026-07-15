@@ -19,6 +19,9 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
     mesh = trimesh.load(stl_path, file_type="stl", force="mesh")
     if mesh.is_empty or len(mesh.faces) == 0:
         raise ValueError("STL contains no triangles")
+    # Watertight (closed, manifold) meshes mesh cleanly; open/degenerate ones
+    # are the usual cause of cryptic snappyHexMesh failures — flag, don't block.
+    watertight = bool(mesh.is_watertight)
 
     mesh.apply_scale(scale)
 
@@ -54,6 +57,7 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
         "frontal_area_m2": float(frontal_area),
         "triangles": int(len(mesh.faces)),
         "centroid": [float(c) for c in mesh.bounds.mean(axis=0)],
+        "watertight": watertight,
         "_c1": c1,
         "_c2": c2,
     }

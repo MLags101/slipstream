@@ -1633,3 +1633,61 @@ body {
 .storage-actions .seg {
   font-size: 10.5px;
 }
+
+/* --- v5 flow/robustness UI ---------------------------------------------- */
+
+.viewer-dims {
+  position: absolute;
+  top: 42px;
+  left: 14px;
+  font-size: 11.5px;
+  color: var(--accent);
+  background: rgba(11, 12, 14, 0.7);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  z-index: 2;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.warn-banner {
+  background: rgba(240, 180, 41, 0.08);
+  border: 1px solid #5c4a1a;
+  border-left: 3px solid var(--readout);
+  color: #e7cf9a;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.cancel-banner {
+  border-color: var(--border-strong);
+}
+
+.cancel-banner .error-title {
+  color: var(--text-2);
+}
+
+.result-warnings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.result-warning {
+  background: rgba(240, 180, 41, 0.07);
+  border-left: 3px solid var(--readout);
+  color: #e7cf9a;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.pill-cancelled {
+  background: #2a2d33;
+  color: var(--text-2);
+}

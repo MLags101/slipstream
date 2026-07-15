@@ -27,6 +27,17 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
     ...(refDiffers
       ? [{ label: "Reference area", value: formatArea(result.ref_area_m2!) }]
       : []),
+    ...(result.reynolds
+      ? [
+          {
+            label: "Reynolds number",
+            value:
+              result.reynolds >= 1e6
+                ? `${(result.reynolds / 1e6).toFixed(2)}M`
+                : formatInt(Math.round(result.reynolds)),
+          },
+        ]
+      : []),
     { label: "Mesh cells", value: formatInt(result.mesh_cells) },
     { label: "Runtime", value: formatDuration(result.runtime_s) },
     {
@@ -43,6 +54,24 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
     downloadText(`${slugify(name)}_results.csv`, resultToCsv(name, result));
   const copyCsv = () =>
     void navigator.clipboard?.writeText(resultToCsv(name, result));
+
+  // Advisories that affect how much to trust the numbers.
+  const warnings: string[] = [];
+  if (result.wind_speed > 100)
+    warnings.push(
+      `At ${result.wind_speed} m/s the flow is compressible (~Mach ${(
+        result.wind_speed / 343
+      ).toFixed(2)}); this incompressible solver over-simplifies it — treat results as indicative.`,
+    );
+  const mq = result.mesh_quality;
+  if (mq?.rating === "poor")
+    warnings.push(
+      "Mesh quality is poor (high skewness / non-orthogonality) — results may be unreliable. A finer quality setting usually helps.",
+    );
+  if (result.cd_std_last20pct > 0.02 * Math.max(Math.abs(result.cd), 0.1))
+    warnings.push(
+      "Cd was still wandering at the end — it may not be fully converged. Try a finer mesh.",
+    );
 
   // v2 drag breakdown — null (or absent) for runs solved before the feature.
   const dragP = result.drag_pressure_N;
@@ -64,6 +93,15 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
         </div>
       </div>
       <div className="results-body">
+        {warnings.length > 0 && (
+          <div className="result-warnings">
+            {warnings.map((w, i) => (
+              <div key={i} className="result-warning">
+                ⚠ {w}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="hero-stat">
           <div className="hero-label">Drag coefficient</div>
           <div className="hero-value mono">{formatCoeff(result.cd)}</div>
