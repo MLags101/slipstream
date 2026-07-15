@@ -58,17 +58,48 @@ export function StorageFooter({
     }
   };
 
+  const compact = async () => {
+    if (
+      !window.confirm(
+        `Compact finished runs to reclaim ${fmtBytes(info.compactable_bytes)}? ` +
+          "Results and saved visualizations are kept; only the meshes are freed, " +
+          "so new slice angles and streamlines can't be generated for those runs.",
+      )
+    )
+      return;
+    setBusy(true);
+    try {
+      await api.compactRuns();
+      await load();
+      onPruned();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="storage-footer">
       <span className="storage-usage mono" title={`${info.run_count} runs on disk`}>
         {fmtBytes(info.total_bytes)} · {info.run_count} run
         {info.run_count === 1 ? "" : "s"}
       </span>
-      {info.reclaimable_bytes > 0 && (
-        <button className="seg storage-clear" disabled={busy} onClick={prune}>
-          {busy ? "clearing…" : `clear finished (${fmtBytes(info.reclaimable_bytes)})`}
-        </button>
-      )}
+      <div className="storage-actions">
+        {info.compactable_bytes > 0 && (
+          <button
+            className="seg"
+            disabled={busy}
+            onClick={compact}
+            title="Free meshes but keep results and saved views"
+          >
+            {busy ? "…" : `compact (${fmtBytes(info.compactable_bytes)})`}
+          </button>
+        )}
+        {info.reclaimable_bytes > 0 && (
+          <button className="seg storage-clear" disabled={busy} onClick={prune}>
+            {busy ? "…" : `clear (${fmtBytes(info.reclaimable_bytes)})`}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

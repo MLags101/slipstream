@@ -1624,7 +1624,12 @@ body {
   letter-spacing: 0.03em;
 }
 
-.storage-clear {
+.storage-actions {
   margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.storage-actions .seg {
   font-size: 10.5px;
 }

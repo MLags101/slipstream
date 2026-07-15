@@ -253,6 +253,8 @@ export interface StorageInfo {
   run_count: number;
   finished_count: number;
   reclaimable_bytes: number;
+  /** Space freed by compacting (dropping meshes, keeping results + viz). */
+  compactable_bytes: number;
 }
 
 const BASE = "/api";
@@ -295,6 +297,11 @@ export const api = {
   async pruneRuns(): Promise<{ deleted: string[]; freed_bytes: number }> {
     const res = await request("/runs/prune", { method: "POST" });
     return (await res.json()) as { deleted: string[]; freed_bytes: number };
+  },
+
+  async compactRuns(): Promise<{ compacted: string[]; freed_bytes: number }> {
+    const res = await request("/runs/compact", { method: "POST" });
+    return (await res.json()) as { compacted: string[]; freed_bytes: number };
   },
 
   /** POST /api/runs — multipart: `stl` file + `config` JSON string. */

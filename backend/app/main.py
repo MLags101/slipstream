@@ -46,6 +46,14 @@ def health():
     return {"ok": True, "openfoam": p, "data_dir": str(DATA_DIR)}
 
 
+def _compacted_msg(state: dict) -> str | None:
+    if state.get("compacted"):
+        return ("This run was compacted to save space — its mesh was freed, so "
+                "new slice angles and streamlines can't be generated. "
+                "Already-saved views still work.")
+    return None
+
+
 def _dir_size(path: Path) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
@@ -66,23 +74,50 @@ def storage():
         s.get("group_id") for s in states
         if s["status"] not in ("done", "error") and s.get("group_id")
     }
-    total = finished = reclaimable = 0
+    total = finished = reclaimable = compactable = 0
     for s in states:
         rd = DATA_DIR / s["id"]
         size = _dir_size(rd)
         total += size
         terminal = s["status"] in ("done", "error")
+        freeable = (terminal and not runner.is_active(s["id"])
+                    and s.get("group_id") not in busy_groups)
         if terminal:
             finished += 1
-        if (terminal and not runner.is_active(s["id"])
-                and s.get("group_id") not in busy_groups):
+        if freeable:
             reclaimable += size
+            if not s.get("compacted"):
+                compactable += _dir_size(rd / "case")
     return {
         "total_bytes": total,
         "run_count": len(states),
         "finished_count": finished,
         "reclaimable_bytes": reclaimable,
+        "compactable_bytes": compactable,
     }
+
+
+@app.post("/api/runs/compact")
+def compact_runs():
+    """Drop the OpenFOAM case (mesh + fields) from every finished run, keeping
+    results and already-generated visualizations. Frees the bulk of the space
+    but disables new slice angles / streamlines for those runs."""
+    states = runner.list()
+    busy_groups = {
+        s.get("group_id") for s in states
+        if s["status"] not in ("done", "error") and s.get("group_id")
+    }
+    compacted, freed = [], 0
+    for s in states:
+        if s["status"] not in ("done", "error"):
+            continue
+        if (runner.is_active(s["id"]) or s.get("group_id") in busy_groups
+                or s.get("compacted")):
+            continue
+        freed += foamcase.compact_case(DATA_DIR / s["id"])
+        runner.update(s["id"], compacted=True)
+        compacted.append(s["id"])
+    return {"compacted": compacted, "freed_bytes": freed}
 
 
 @app.post("/api/runs/prune")
@@ -422,7 +457,7 @@ def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
         payload = ondemand.slice_json(DATA_DIR / run_id, axis, pos,
                                       float(s["config"].get("rho") or 1.225))
     except RuntimeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, _compacted_msg(s) or str(e))
     payload["axis"] = axis
     payload["pos"] = pos
     return payload
@@ -442,7 +477,7 @@ def get_viz_streamlines(run_id: str, density: str = "med", region: str = "full")
                                          float(s["config"].get("rho") or 1.225),
                                          density=density, region=region)
     except RuntimeError as e:
-        raise HTTPException(422, str(e))
+        raise HTTPException(422, _compacted_msg(s) or str(e))
 
 
 @app.delete("/api/runs/{run_id}")

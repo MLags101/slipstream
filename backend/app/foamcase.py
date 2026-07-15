@@ -203,3 +203,45 @@ disk{i}
         "\nactions\n(" + "".join(actions) + "\n);\n")
     (case_dir / "constant" / "fvOptions").write_text(
         _FOAM_HEADER.format(obj="fvOptions") + "".join(options) + "\n")
+
+
+# ---------------------------------------------------------------------------
+# Storage reclamation
+# ---------------------------------------------------------------------------
+
+def free_processor_dirs(case_dir: str | Path) -> int:
+    """Delete the per-processor decomposition (processorN/) left by the
+    parallel solve. Safe once reconstructPar has run. Returns bytes freed."""
+    case_dir = Path(case_dir)
+    freed = 0
+    for p in case_dir.glob("processor*"):
+        if p.is_dir():
+            freed += _dir_bytes(p)
+            shutil.rmtree(p, ignore_errors=True)
+    return freed
+
+
+def compact_case(run_dir: str | Path) -> int:
+    """Aggressively reclaim a finished run: delete the whole OpenFOAM case/
+    (mesh + solved fields) but keep the cached viz JSON, config, state and the
+    STL. Results and already-generated visualizations survive; new on-demand
+    slice angles / streamlines can no longer be generated. Returns bytes freed."""
+    run_dir = Path(run_dir)
+    case = run_dir / "case"
+    if not case.exists():
+        return 0
+    freed = _dir_bytes(case)
+    shutil.rmtree(case, ignore_errors=True)
+    return freed
+
+
+def _dir_bytes(path: Path) -> int:
+    import os
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += (Path(root) / f).stat().st_size
+            except OSError:
+                pass
+    return total

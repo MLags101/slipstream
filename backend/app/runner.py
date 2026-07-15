@@ -34,6 +34,10 @@ class Runner:
         self.queue: queue.Queue[str] = queue.Queue()
         self.current: str | None = None
         self._load_existing()
+        # Nothing is solving at startup, so any leftover per-processor
+        # decomposition is dead weight — reclaim it (harmless, ~45%/run).
+        for rid in self.states:
+            foamcase.free_processor_dirs(self.data_dir / rid / "case")
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
@@ -301,6 +305,11 @@ class Runner:
                     message="Reconstructing fields")
         self._foam(case, "reconstructPar -latestTime", "log.reconstructPar",
                    run_id, check=False)
+
+        # The per-processor decomposition is only needed during the parallel
+        # solve; once fields are reconstructed it is pure dead weight (~45% of
+        # the case). Drop it immediately.
+        foamcase.free_processor_dirs(case)
 
         # ---- postprocessing (0.9 - 1.0) -----------------------------------
         self.update(run_id, progress=0.94, message="Building visualization data")

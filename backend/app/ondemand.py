@@ -104,6 +104,8 @@ def slice_json(run_dir: Path, axis: str, pos: float, rho: float) -> dict:
         if (payload := _cached(cache)) is not None:
             return payload
         case = run_dir / "case"
+        if not case.exists():
+            raise RuntimeError("case data unavailable (run compacted)")
         vec = {"x": "1 0 0", "y": "0 1 0", "z": "0 0 1"}[axis]
         point = {"x": f"({pos} 0 0)", "y": f"(0 {pos} 0)", "z": f"(0 0 {pos})"}[axis]
         (case / "system" / "onDemandSlice").write_text(
@@ -140,6 +142,8 @@ def streamlines_json(run_dir: Path, model: dict, rho: float,
         if (payload := _cached(cache)) is not None:
             return payload
         case = run_dir / "case"
+        if not case.exists():
+            raise RuntimeError("case data unavailable (run compacted)")
         (bx0, by0, bz0), (bx1, by1, bz1) = model["bbox_m"]
         L = bx1 - bx0
         # Seed rake: 7x7 grid upstream of the model, spanning 1.15x its
