@@ -1576,3 +1576,15 @@ body {
 .dropzone-sample:hover {
   color: #5fd7ea;
 }
+
+.viewer-tools {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 2;
+}
+
+.viewer-tools .seg {
+  background: rgba(11, 12, 14, 0.75);
+  backdrop-filter: blur(3px);
+}

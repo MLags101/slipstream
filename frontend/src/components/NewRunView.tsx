@@ -49,6 +49,17 @@ export function NewRunView({ onCreated }: Props) {
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const stlCenterRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const framedRef = useRef(false);
+  const modelGroupRef = useRef<THREE.Group | null>(null);
+  const propGroupsRef = useRef<THREE.Group[]>([]);
+  const [tool, setTool] = useState<"orbit" | "rotate">("orbit");
+  // Latest values for the (once-attached) pointer handlers.
+  const latestRef = useRef<{
+    tool: "orbit" | "rotate";
+    propRows: { x: string; y: string; z: string; d: string; t: string }[];
+    propsEnabled: boolean;
+    yawLocked: boolean;
+    pitchLocked: boolean;
+  }>({ tool: "orbit", propRows: [], propsEnabled: false, yawLocked: false, pitchLocked: false });
 
   // Viewer lifecycle — created once the preview host exists.
   useEffect(() => {
@@ -75,6 +86,19 @@ export function NewRunView({ onCreated }: Props) {
       ? 0
       : parseFloat(pitchDeg) || 0;
 
+  latestRef.current = {
+    tool,
+    propRows,
+    propsEnabled,
+    yawLocked: sweepEnabled && sweepParam === "yaw",
+    pitchLocked: trimOn || (sweepEnabled && sweepParam === "pitch"),
+  };
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (viewer) viewer.controls.enableRotate = tool === "orbit";
+  }, [tool, file]);
+
   useEffect(() => {
     const viewer = viewerRef.current;
     const geometry = geometryRef.current;
@@ -83,6 +107,7 @@ export function NewRunView({ onCreated }: Props) {
     const sphere = geometry.boundingSphere ?? new THREE.Sphere();
     const r = Math.max(sphere.radius, 1e-6);
 
+    const propGroups: THREE.Group[] = [];
     const modelGroup = new THREE.Group();
     modelGroup.add(
       new THREE.Mesh(
@@ -114,19 +139,26 @@ export function NewRunView({ onCreated }: Props) {
           }),
         );
         disk.rotation.x = Math.PI / 2; // cylinder axis Y -> model +Z
-        disk.position.set(x - c.x, y - c.y, z - c.z);
-        modelGroup.add(disk);
-        const thrust = new THREE.ArrowHelper(
-          new THREE.Vector3(0, 0, 1),
-          disk.position,
-          d * 0.45,
-          0x35c5dd,
-          d * 0.14,
-          d * 0.07,
+        const holder = new THREE.Group();
+        holder.add(disk);
+        holder.add(
+          new THREE.ArrowHelper(
+            new THREE.Vector3(0, 0, 1),
+            new THREE.Vector3(0, 0, 0),
+            d * 0.45,
+            0x35c5dd,
+            d * 0.14,
+            d * 0.07,
+          ),
         );
-        modelGroup.add(thrust);
+        holder.position.set(x - c.x, y - c.y, z - c.z);
+        holder.userData.rowIndex = propRows.indexOf(row);
+        modelGroup.add(holder);
+        propGroups.push(holder);
       }
     }
+    propGroupsRef.current = propGroups;
+    modelGroupRef.current = modelGroup;
 
     // Backend prep order: R = Rz(-yaw) · Ry(pitch). Euler "ZYX" composes
     // exactly Rz(z)·Ry(y)·Rx(x).
@@ -143,6 +175,156 @@ export function NewRunView({ onCreated }: Props) {
       framedRef.current = true;
     }
   }, [file, propsEnabled, propRows, previewYaw, previewPitch]);
+
+  // Slicer-style direct manipulation: drag a disk to slide it on its rotor
+  // plane (hold Shift for height); with the rotate tool, drag to set yaw/pitch.
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !file) return;
+    const el = viewer.renderer.domElement;
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    let drag:
+      | { kind: "disk"; holder: THREE.Group; plane: THREE.Plane; shift: boolean }
+      | { kind: "rotate"; x0: number; y0: number; yaw0: number; pitch0: number }
+      | null = null;
+
+    const toNdc = (e: PointerEvent) => {
+      const r = el.getBoundingClientRect();
+      ndc.set(
+        ((e.clientX - r.left) / r.width) * 2 - 1,
+        -((e.clientY - r.top) / r.height) * 2 + 1,
+      );
+    };
+
+    const pickDisk = (e: PointerEvent): THREE.Group | null => {
+      if (!latestRef.current.propsEnabled) return null;
+      toNdc(e);
+      ray.setFromCamera(ndc, viewer.camera);
+      const hits = ray.intersectObjects(propGroupsRef.current, true);
+      for (const h of hits) {
+        let n: THREE.Object3D | null = h.object;
+        while (n && n.userData.rowIndex === undefined) n = n.parent;
+        if (n) return n as THREE.Group;
+      }
+      return null;
+    };
+
+    const localZWorld = () => {
+      const mg = modelGroupRef.current!;
+      return new THREE.Vector3(0, 0, 1).applyQuaternion(mg.quaternion).normalize();
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return;
+      const mg = modelGroupRef.current;
+      if (!mg) return;
+      if (latestRef.current.tool === "rotate") {
+        drag = {
+          kind: "rotate",
+          x0: e.clientX,
+          y0: e.clientY,
+          yaw0: -THREE.MathUtils.radToDeg(mg.rotation.z),
+          pitch0: THREE.MathUtils.radToDeg(mg.rotation.y),
+        };
+        viewer.controls.enabled = false;
+        try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+        return;
+      }
+      const holder = pickDisk(e);
+      if (!holder) return;
+      const zAxis = localZWorld();
+      const wp = holder.getWorldPosition(new THREE.Vector3());
+      let plane: THREE.Plane;
+      if (e.shiftKey) {
+        // Height drag: plane containing the local Z axis, facing the camera.
+        const camDir = viewer.camera
+          .getWorldDirection(new THREE.Vector3())
+          .negate();
+        const n = camDir.addScaledVector(zAxis, -camDir.dot(zAxis)).normalize();
+        plane = new THREE.Plane().setFromNormalAndCoplanarPoint(n, wp);
+      } else {
+        plane = new THREE.Plane().setFromNormalAndCoplanarPoint(zAxis, wp);
+      }
+      drag = { kind: "disk", holder, plane, shift: e.shiftKey };
+      viewer.controls.enabled = false;
+      try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (!drag) {
+        el.style.cursor =
+          latestRef.current.tool === "rotate"
+            ? "ew-resize"
+            : pickDisk(e)
+              ? "grab"
+              : "";
+        return;
+      }
+      if (drag.kind === "rotate") {
+        const { yawLocked, pitchLocked } = latestRef.current;
+        const mg = modelGroupRef.current!;
+        const yaw = yawLocked
+          ? drag.yaw0
+          : drag.yaw0 + (e.clientX - drag.x0) * 0.4;
+        const pitch = pitchLocked
+          ? drag.pitch0
+          : drag.pitch0 + (e.clientY - drag.y0) * 0.3;
+        mg.rotation.y = THREE.MathUtils.degToRad(pitch);
+        mg.rotation.z = -THREE.MathUtils.degToRad(yaw);
+        return;
+      }
+      toNdc(e);
+      ray.setFromCamera(ndc, viewer.camera);
+      const hit = ray.ray.intersectPlane(drag.plane, new THREE.Vector3());
+      if (!hit) return;
+      const mg = modelGroupRef.current!;
+      const local = mg.worldToLocal(hit.clone());
+      const snap = (v: number) => Math.round(v * 2) / 2; // 0.5 units
+      if (drag.shift) {
+        drag.holder.position.z = snap(local.z);
+      } else {
+        drag.holder.position.x = snap(local.x);
+        drag.holder.position.y = snap(local.y);
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      if (!drag) return;
+      const mg = modelGroupRef.current;
+      viewer.controls.enabled = true;
+      try { el.releasePointerCapture(e.pointerId); } catch { /* synthetic */ }
+      if (drag.kind === "rotate" && mg) {
+        const { yawLocked, pitchLocked } = latestRef.current;
+        const round = (v: number) => Math.round(v * 2) / 2;
+        if (!yawLocked) setYawDeg(String(round(-THREE.MathUtils.radToDeg(mg.rotation.z))));
+        if (!pitchLocked) setPitchDeg(String(round(THREE.MathUtils.radToDeg(mg.rotation.y))));
+      } else if (drag.kind === "disk") {
+        const c = stlCenterRef.current;
+        const i = drag.holder.userData.rowIndex as number;
+        const p = drag.holder.position;
+        const fmt = (v: number) => String(Math.round(v * 10) / 10);
+        setPropRows((rows) =>
+          rows.map((row, j) =>
+            j === i
+              ? { ...row, x: fmt(p.x + c.x), y: fmt(p.y + c.y), z: fmt(p.z + c.z) }
+              : row,
+          ),
+        );
+      }
+      drag = null;
+    };
+
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file !== null]);
 
   const acceptFile = useCallback(async (f: File) => {
     setParseError(null);
@@ -288,7 +470,30 @@ export function NewRunView({ onCreated }: Props) {
                 replace
               </button>
             </div>
-            <div className="viewer-hint">wind flows along +X (blue arrows)</div>
+            <div className="viewer-hint">
+              {tool === "rotate"
+                ? "drag to set yaw (\u2194) and pitch (\u2195) \u00b7 wind stays along +X"
+                : propsEnabled
+                  ? "drag disks to move \u00b7 \u21e7 drag = height \u00b7 wind flows along +X"
+                  : "wind flows along +X (blue arrows)"}
+            </div>
+            <div className="viewer-tools segmented">
+              {(
+                [
+                  ["orbit", "\u27f2 orbit"],
+                  ["rotate", "\u2921 attitude"],
+                ] as ["orbit" | "rotate", string][]
+              ).map(([t, label]) => (
+                <button
+                  key={t}
+                  type="button"
+                  className={`seg${tool === t ? " seg-active" : ""}`}
+                  onClick={() => setTool(t)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </>
         ) : (
           <div
