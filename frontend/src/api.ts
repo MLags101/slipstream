@@ -40,6 +40,8 @@ export interface RunConfig {
    * with pitch/yaw).
    */
   props?: PropSpec[];
+  /** Reference area (cm²) for force coefficients; defaults to frontal area. */
+  ref_area_cm2?: number;
   /**
    * v3.1: solve the forward-flight trim attitude. Requires `props`; mutually
    * exclusive with sweeps. The backend iterates runs (shared group) adjusting
@@ -95,6 +97,8 @@ export interface RunResult {
   lift_N: number;
   side_N: number;
   frontal_area_m2: number;
+  /** Reference area used for the coefficients (frontal, or an override). */
+  ref_area_m2?: number;
   wind_speed: number;
   rho: number;
   iterations: number;
@@ -243,6 +247,14 @@ export class BackendUnreachableError extends Error {
   }
 }
 
+/** GET /api/storage — run-store disk usage. */
+export interface StorageInfo {
+  total_bytes: number;
+  run_count: number;
+  finished_count: number;
+  reclaimable_bytes: number;
+}
+
 const BASE = "/api";
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
@@ -276,6 +288,15 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const api = {
+  getStorage(): Promise<StorageInfo> {
+    return getJson<StorageInfo>("/storage");
+  },
+
+  async pruneRuns(): Promise<{ deleted: string[]; freed_bytes: number }> {
+    const res = await request("/runs/prune", { method: "POST" });
+    return (await res.json()) as { deleted: string[]; freed_bytes: number };
+  },
+
   /** POST /api/runs — multipart: `stl` file + `config` JSON string. */
   async createRun(stl: File, config: RunConfig): Promise<CreateRunResponse> {
     const form = new FormData();

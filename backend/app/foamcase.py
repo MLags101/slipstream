@@ -73,11 +73,16 @@ def compute_params(model: dict, config: dict) -> dict:
 
     cx, cy, cz = model.get("centroid", [0.0, 0.0, 0.0])
 
+    # Reference area for force coefficients: frontal area by default, or a
+    # user override (cm^2 -> m^2) e.g. planform area for a wing's lift.
+    ref_cm2 = config.get("ref_area_cm2")
+    ref_area = float(ref_cm2) / 1e4 if ref_cm2 else model["frontal_area_m2"]
+
     return {
         "U0": fmt(U0), "rho": fmt(rho), "nu": fmt(nu),
         "k0": fmt(k0), "omega0": fmt(omega0),
         "endTime": str(q["iterations"]),
-        "aref": fmt(model["frontal_area_m2"]), "lref": fmt(L),
+        "aref": fmt(ref_area), "lref": fmt(L),
         "cx": fmt(cx), "cy": fmt(cy), "cz": fmt(cz),
         "dx0": fmt(dx0), "dx1": fmt(dx1),
         "dy0": fmt(dy0), "dy1": fmt(dy1),

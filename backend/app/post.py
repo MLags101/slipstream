@@ -122,14 +122,19 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     cd, cl, cs = avg("Cd"), avg("Cl"), avg("Cs")
     rho = float(config.get("rho") or 1.225)
     u = float(config["wind_speed"])
-    area = float(model["frontal_area_m2"])
-    qdyn = 0.5 * rho * u * u * area
+    frontal = float(model["frontal_area_m2"])
+    # Coefficients are referenced to this area (must match foamcase aref); the
+    # forces stay physical either way. Defaults to frontal area.
+    ref_cm2 = config.get("ref_area_cm2")
+    ref_area = float(ref_cm2) / 1e4 if ref_cm2 else frontal
+    qdyn = 0.5 * rho * u * u * ref_area
     drag_pressure, drag_viscous = drag_breakdown(case_dir)
     return {
         "cd": cd, "cl": cl, "cs": cs,
         "drag_N": cd * qdyn, "lift_N": cl * qdyn, "side_N": cs * qdyn,
         "drag_pressure_N": drag_pressure, "drag_viscous_N": drag_viscous,
-        "frontal_area_m2": area, "wind_speed": u, "rho": rho,
+        "frontal_area_m2": frontal, "ref_area_m2": ref_area,
+        "wind_speed": u, "rho": rho,
         "iterations": int(coeffs["Time"][-1]),
         "mesh_cells": mesh_cells,
         "runtime_s": round(runtime_s, 1),

@@ -4,6 +4,7 @@ import { usePoll } from "../hooks/usePoll";
 import { isTerminal, StatusPill } from "./StatusPill";
 import { LineChart } from "./LineChart";
 import { formatCoeff, formatForce } from "../lib/format";
+import { downloadText, sweepToCsv, slugify } from "../lib/download";
 
 // Same categorical palette as the convergence charts.
 const C_BLUE = "#3987e5";
@@ -64,6 +65,20 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
           {group.wind_speed} m/s · {group.quality} · {settled}/{members.length}{" "}
           finished
         </span>
+        {!isTrim && done.length >= 2 && (
+          <button
+            className="seg sweep-export"
+            title="Download sweep as CSV"
+            onClick={() =>
+              downloadText(
+                `${slugify(group.name)}_${param}_sweep.csv`,
+                sweepToCsv(param, members),
+              )
+            }
+          >
+            export csv
+          </button>
+        )}
       </div>
       {isTrim && trim && (
         <div className="trim-strip mono">

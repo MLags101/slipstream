@@ -123,6 +123,8 @@ export default function App() {
           onToggleCompare={toggleCompare}
           onOpenCompare={() => setRoute({ view: "compare" })}
           onClearCompare={clearCompare}
+          refreshKey={refresh}
+          onPruned={() => setRefresh((n) => n + 1)}
         />
         <main className="main">
           {route.view === "new" && (

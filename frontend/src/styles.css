@@ -1588,3 +1588,43 @@ body {
   background: rgba(11, 12, 14, 0.75);
   backdrop-filter: blur(3px);
 }
+
+/* --- results / sweep export + storage footer ---------------------------- */
+
+.results-head,
+.viewer-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.results-export {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.sweep-export,
+.viewer-save {
+  margin-left: auto;
+}
+
+.storage-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+
+.storage-usage {
+  letter-spacing: 0.03em;
+}
+
+.storage-clear {
+  margin-left: auto;
+  font-size: 10.5px;
+}

@@ -1,5 +1,6 @@
 import type { RunSummary } from "../api";
 import { StatusPill } from "./StatusPill";
+import { StorageFooter } from "./StorageFooter";
 import { formatCoeff, formatTimestamp } from "../lib/format";
 
 interface Props {
@@ -15,6 +16,9 @@ interface Props {
   onToggleCompare: (id: string) => void;
   onOpenCompare: () => void;
   onClearCompare: () => void;
+  /** Bumped whenever the run list changes, so storage usage refetches. */
+  refreshKey: number;
+  onPruned: () => void;
 }
 
 export function Sidebar({
@@ -28,6 +32,8 @@ export function Sidebar({
   onToggleCompare,
   onOpenCompare,
   onClearCompare,
+  refreshKey,
+  onPruned,
 }: Props) {
   return (
     <aside className="sidebar">
@@ -125,6 +131,7 @@ export function Sidebar({
           );
         })}
       </div>
+      <StorageFooter refreshKey={refreshKey} onPruned={onPruned} />
     </aside>
   );
 }

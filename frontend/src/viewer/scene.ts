@@ -28,7 +28,11 @@ export function createViewer(container: HTMLElement): Viewer {
   camera.up.set(0, 0, 1); // contract: +Z is up
   camera.position.set(-2, -3, 1.5);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  // preserveDrawingBuffer lets us read the canvas back for image export.
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    preserveDrawingBuffer: true,
+  });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   container.appendChild(renderer.domElement);
   renderer.domElement.style.display = "block";

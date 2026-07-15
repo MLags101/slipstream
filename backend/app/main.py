@@ -46,6 +46,67 @@ def health():
     return {"ok": True, "openfoam": p, "data_dir": str(DATA_DIR)}
 
 
+def _dir_size(path: Path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += (Path(root) / f).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+@app.get("/api/storage")
+def storage():
+    """Disk usage of the run store and how much a prune would reclaim."""
+    states = runner.list()
+    # Group ids that still have an in-progress member are off-limits to prune.
+    busy_groups = {
+        s.get("group_id") for s in states
+        if s["status"] not in ("done", "error") and s.get("group_id")
+    }
+    total = finished = reclaimable = 0
+    for s in states:
+        rd = DATA_DIR / s["id"]
+        size = _dir_size(rd)
+        total += size
+        terminal = s["status"] in ("done", "error")
+        if terminal:
+            finished += 1
+        if (terminal and not runner.is_active(s["id"])
+                and s.get("group_id") not in busy_groups):
+            reclaimable += size
+    return {
+        "total_bytes": total,
+        "run_count": len(states),
+        "finished_count": finished,
+        "reclaimable_bytes": reclaimable,
+    }
+
+
+@app.post("/api/runs/prune")
+def prune_runs():
+    """Delete every finished run that isn't part of an in-progress group."""
+    states = runner.list()
+    busy_groups = {
+        s.get("group_id") for s in states
+        if s["status"] not in ("done", "error") and s.get("group_id")
+    }
+    deleted, freed = [], 0
+    for s in states:
+        if s["status"] not in ("done", "error"):
+            continue
+        if runner.is_active(s["id"]) or s.get("group_id") in busy_groups:
+            continue
+        rd = DATA_DIR / s["id"]
+        freed += _dir_size(rd)
+        runner.delete(s["id"])
+        shutil.rmtree(rd, ignore_errors=True)
+        deleted.append(s["id"])
+    return {"deleted": deleted, "freed_bytes": freed}
+
+
 @app.post("/api/runs", status_code=201)
 async def create_run(stl: UploadFile, config: str = Form(...)):
     try:
@@ -70,6 +131,10 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     cfg.setdefault("pitch_deg", 0)
     cfg.setdefault("rho", 1.225)
     cfg.setdefault("nu", 1.5e-5)
+
+    ref = cfg.get("ref_area_cm2")
+    if ref is not None and not (_num(ref) and ref > 0):
+        raise HTTPException(422, "ref_area_cm2 must be a positive number (cm^2)")
 
     props = cfg.get("props")
     if props is not None:

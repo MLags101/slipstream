@@ -39,6 +39,7 @@ export function NewRunView({ onCreated }: Props) {
   const [trimWeight, setTrimWeight] = useState("650");
   // Trim solves pitch + per-prop thrust itself; only live with prop disks.
   const trimOn = propsEnabled && trimEnabled;
+  const [refArea, setRefArea] = useState(""); // cm², blank = auto (frontal)
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -421,6 +422,15 @@ export function NewRunView({ onCreated }: Props) {
         });
       }
     }
+    let refAreaCm2: number | undefined;
+    if (refArea.trim() !== "") {
+      const ra = parseFloat(refArea);
+      if (!Number.isFinite(ra) || ra <= 0) {
+        setSubmitError("Reference area must be a positive number (cm²)");
+        return;
+      }
+      refAreaCm2 = ra;
+    }
     const config: RunConfig = {
       name: name.trim() || nameFromFilename(file.name),
       unit,
@@ -433,6 +443,7 @@ export function NewRunView({ onCreated }: Props) {
       ...(pitchSwept ? { pitch_sweep: sweep } : {}),
       ...(props && props.length ? { props } : {}),
       ...(trimCfg ? { trim: trimCfg } : {}),
+      ...(refAreaCm2 ? { ref_area_cm2: refAreaCm2 } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -789,6 +800,22 @@ export function NewRunView({ onCreated }: Props) {
               )}
             </div>
           )}
+          <label className="field">
+            <span className="field-label">
+              Reference area (cm²) — optional
+            </span>
+            <input
+              type="number"
+              className="mono"
+              value={refArea}
+              min={0}
+              step="any"
+              placeholder="auto (frontal area)"
+              disabled={!file}
+              onChange={(e) => setRefArea(e.target.value)}
+              title="Coefficient reference area. Leave blank to use frontal area; set planform area for a wing's lift coefficient."
+            />
+          </label>
           <label className="field">
             <span className="field-label">Mesh quality</span>
             <select

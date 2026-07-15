@@ -24,6 +24,7 @@ import {
   linearNorm,
 } from "../lib/colormaps";
 import { Colorbar } from "./Colorbar";
+import { downloadDataUrl } from "../lib/download";
 
 type Mode = "geometry" | "surface" | "slice" | "streamlines";
 
@@ -550,6 +551,21 @@ export function ResultViewer({ runId, config, model }: Props) {
     <section className="panel viewer-panel">
       <div className="panel-head viewer-panel-head">
         <span>3D viewer</span>
+        <button
+          className="seg viewer-save"
+          title="Save the current view as a PNG"
+          onClick={() => {
+            const v = viewerRef.current;
+            if (!v) return;
+            v.renderer.render(v.scene, v.camera);
+            downloadDataUrl(
+              `windtunnel_${mode}.png`,
+              v.renderer.domElement.toDataURL("image/png"),
+            );
+          }}
+        >
+          save png
+        </button>
         <div className="segmented">
           {(
             [
