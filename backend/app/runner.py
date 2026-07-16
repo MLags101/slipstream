@@ -272,6 +272,10 @@ class Runner:
         self.update(run_id, model=model, progress=0.06,
                     message="Generating OpenFOAM case")
         foamcase.generate_case(case, params)
+        if config.get("ground_plane"):
+            # Rolling road unless the user asked for a fixed ground.
+            foamcase.add_ground_plane(
+                case, params, moving=config.get("ground") != "static")
         tri_dir.mkdir(parents=True, exist_ok=True)
         (rd / "model_prepared.stl").replace(tri_dir / "model.stl")
         self.update(run_id, progress=0.1, message="Case generated")

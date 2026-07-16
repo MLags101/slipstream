@@ -171,6 +171,11 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     if ref is not None and not (_num(ref) and ref > 0):
         raise HTTPException(422, "ref_area_cm2 must be a positive number (cm^2)")
 
+    if "ground_plane" in cfg and not isinstance(cfg["ground_plane"], bool):
+        raise HTTPException(422, "ground_plane must be true or false")
+    if cfg.get("ground") not in (None, "moving", "static"):
+        raise HTTPException(422, "ground must be 'moving' or 'static'")
+
     props = cfg.get("props")
     if props is not None:
         if (not isinstance(props, list) or len(props) > 8 or not all(
@@ -311,7 +316,8 @@ def get_run(run_id: str):
     s = _get_state(run_id)
     model = dict(s["model"]) if s["model"] else None
     if model and "bbox_m" in model:
-        model["domain_bbox_m"] = foamcase.domain_bounds(model)
+        model["domain_bbox_m"] = foamcase.domain_bounds(
+            model, ground=bool(s["config"].get("ground_plane")))
     return {
         "id": s["id"], "name": s["name"], "status": s["status"],
         "progress": s["progress"], "message": s["message"],
@@ -450,7 +456,8 @@ def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
     if s["status"] != "done":
         raise HTTPException(404, "visualization not available (run not done)")
     ax = {"x": 0, "y": 1, "z": 2}[axis]
-    lo, hi = (foamcase.domain_bounds(s["model"])[i][ax] for i in (0, 1))
+    _db = foamcase.domain_bounds(s["model"], ground=bool(s["config"].get("ground_plane")))
+    lo, hi = _db[0][ax], _db[1][ax]
     eps = 0.01 * (hi - lo)
     pos = min(max(pos or 0.0, lo + eps), hi - eps)
     try:

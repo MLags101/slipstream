@@ -43,6 +43,10 @@ export interface RunConfig {
   props?: PropSpec[];
   /** Reference area (cm²) for force coefficients; defaults to frontal area. */
   ref_area_cm2?: number;
+  /** Place a road under the model (ground effect) — for cars/vehicles. */
+  ground_plane?: boolean;
+  /** Ground type when ground_plane is set: "moving" rolling road (default) or "static". */
+  ground?: "moving" | "static";
   /**
    * v3.1: solve the forward-flight trim attitude. Requires `props`; mutually
    * exclusive with sweeps. The backend iterates runs (shared group) adjusting

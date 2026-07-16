@@ -235,3 +235,15 @@ controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
   ("solved by trim") while on. The sweep panel becomes "Trim solve" for trim groups
   with an amber readout strip (tilt / thrust per prop / drag, or
   "trimming… iteration k").
+
+## v6 additions (ground plane / rolling road)
+
+- Config gains optional `"ground_plane": true` (+ `"ground": "moving"|"static"`, default
+  moving). Places a road under the model for automotive ground-effect studies: the domain
+  floor drops from the far-field to ~1.5 base cells below the model's lowest point, the
+  domain's bottom face becomes a `ground` **wall** patch, and (moving) its wall velocity is
+  set to the freestream — a rolling road, which avoids a spurious ground boundary layer.
+  `domain_bounds(model, ground=True)` reflects the raised floor (slice z-range too).
+  Validated: sample car @ 30 m/s free-air lift −0.03 N vs ground −0.17 N (ground effect).
+- Frontend: "Ground plane (rolling road)" checkbox; the setup preview draws the road slab +
+  rolling-road grid at the model underside.

@@ -41,6 +41,7 @@ export function NewRunView({ onCreated }: Props) {
   // Trim solves pitch + per-prop thrust itself; only live with prop disks.
   const trimOn = propsEnabled && trimEnabled;
   const [refArea, setRefArea] = useState(""); // cm², blank = auto (frontal)
+  const [groundPlane, setGroundPlane] = useState(false);
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -171,12 +172,36 @@ export function NewRunView({ onCreated }: Props) {
     const group = new THREE.Group();
     group.add(modelGroup);
     group.add(buildSceneHelpers(r, new THREE.Vector3(0, 0, 0)));
+
+    // Ground plane (road): a slab at the model's underside, drawn in world
+    // space so it stays flat while the model can pitch/yaw above it.
+    if (groundPlane) {
+      geometry.computeBoundingBox();
+      const zmin = geometry.boundingBox!.min.z; // model centered at origin
+      const road = new THREE.Mesh(
+        new THREE.PlaneGeometry(r * 5, r * 5),
+        new THREE.MeshStandardMaterial({
+          color: 0x2a2f36,
+          roughness: 0.95,
+          transparent: true,
+          opacity: 0.85,
+          side: THREE.DoubleSide,
+        }),
+      );
+      road.position.z = zmin;
+      group.add(road);
+      const roadGrid = new THREE.GridHelper(r * 5, 20, 0x3987e5, 0x2e3238);
+      roadGrid.rotation.x = Math.PI / 2;
+      roadGrid.position.z = zmin + r * 0.002;
+      group.add(roadGrid);
+    }
+
     viewer.setContent(group);
     if (!framedRef.current) {
       viewer.frame(new THREE.Vector3(0, 0, 0), r);
       framedRef.current = true;
     }
-  }, [file, propsEnabled, propRows, previewYaw, previewPitch]);
+  }, [file, propsEnabled, propRows, previewYaw, previewPitch, groundPlane]);
 
   // Slicer-style direct manipulation: drag a disk to slide it on its rotor
   // plane (hold Shift for height); with the rotate tool, drag to set yaw/pitch.
@@ -447,6 +472,7 @@ export function NewRunView({ onCreated }: Props) {
       ...(props && props.length ? { props } : {}),
       ...(trimCfg ? { trim: trimCfg } : {}),
       ...(refAreaCm2 ? { ref_area_cm2: refAreaCm2 } : {}),
+      ...(groundPlane ? { ground_plane: true } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -824,6 +850,15 @@ export function NewRunView({ onCreated }: Props) {
               onChange={(e) => setRefArea(e.target.value)}
               title="Coefficient reference area. Leave blank to use frontal area; set planform area for a wing's lift coefficient."
             />
+          </label>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={groundPlane}
+              onChange={(e) => setGroundPlane(e.target.checked)}
+              disabled={!file}
+            />
+            <span>Ground plane (rolling road) — for cars &amp; vehicles</span>
           </label>
           <label className="field">
             <span className="field-label">Mesh quality</span>

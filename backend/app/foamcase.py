@@ -17,18 +17,20 @@ QUALITY = {
 NPROCS = 6
 
 
-def domain_bounds(model: dict) -> list[list[float]]:
+def domain_bounds(model: dict, ground: bool = False) -> list[list[float]]:
     """Wind tunnel domain bbox: x in [xmin-4L, xmax+9L], y/z half-extent
-    3W / 3H, widened until frontal blockage < 5%."""
+    3W / 3H, widened until frontal blockage < 5%. With `ground`, the floor is
+    placed just below the model (a road) instead of far below."""
     (bx0, by0, bz0), (bx1, by1, bz1) = model["bbox_m"]
     L, W, H = bx1 - bx0, by1 - by0, bz1 - bz0
     dx0, dx1 = bx0 - 4.0 * L, bx1 + 9.0 * L
     hy, hz = 3.0 * W, 3.0 * H
+    floor = (bz0 - 0.12 * H) if ground else -hz
     area = model["frontal_area_m2"]
-    while area / ((2 * hy) * (2 * hz)) > 0.05:
+    while area / ((2 * hy) * (hz - floor)) > 0.05:
         hy *= 1.25
         hz *= 1.25
-    return [[dx0, -hy, -hz], [dx1, hy, hz]]
+    return [[dx0, -hy, floor], [dx1, hy, hz]]
 
 
 def compute_params(model: dict, config: dict) -> dict:
@@ -46,10 +48,15 @@ def compute_params(model: dict, config: dict) -> dict:
     nu = float(config.get("nu") or 1.5e-5)
     q = QUALITY[config["quality"]]
 
-    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(model)
+    ground = bool(config.get("ground_plane"))
+    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(model, ground=ground)
 
     domain_len = dx1 - dx0
     cell = domain_len / 70.0
+    if ground:
+        # Keep at least ~1.5 base cells between the model and the road so the
+        # gap is meshable at coarse resolution.
+        dz0 = min(dz0, bz0 - 1.5 * cell)
     nx = max(10, int(math.ceil(domain_len / cell)))
     ny = max(6, int(math.ceil((dy1 - dy0) / cell)))
     nz = max(6, int(math.ceil((dz1 - dz0) / cell)))
@@ -245,3 +252,59 @@ def _dir_bytes(path: Path) -> int:
             except OSError:
                 pass
     return total
+
+
+# ---------------------------------------------------------------------------
+# Ground plane (rolling road) for vehicles
+# ---------------------------------------------------------------------------
+
+_GROUND_BC = {
+    "U": lambda p, moving: (
+        f"    ground\n    {{\n        type            fixedValue;\n"
+        f"        value           uniform ({p['U0']} 0 0);\n    }}\n"
+        if moving else
+        "    ground\n    {\n        type            noSlip;\n    }\n"),
+    "p": lambda p, moving: "    ground\n    {\n        type            zeroGradient;\n    }\n",
+    "k": lambda p, moving: (
+        f"    ground\n    {{\n        type            kqRWallFunction;\n"
+        f"        value           uniform {p['k0']};\n    }}\n"),
+    "omega": lambda p, moving: (
+        f"    ground\n    {{\n        type            omegaWallFunction;\n"
+        f"        value           uniform {p['omega0']};\n    }}\n"),
+    "nut": lambda p, moving: (
+        "    ground\n    {\n        type            nutkWallFunction;\n"
+        "        value           uniform 0;\n    }\n"),
+}
+
+
+def add_ground_plane(case_dir: str | Path, params: dict, moving: bool = True) -> None:
+    """Turn the domain's bottom face into a `ground` wall patch and add its
+    boundary conditions to the 0/ fields. moving=True => rolling road (wall
+    velocity = freestream), which avoids a spurious ground boundary layer."""
+    case = Path(case_dir)
+
+    # 1. blockMeshDict: split the bottom face (0 3 2 1) out of `walls`.
+    bm = case / "system" / "blockMeshDict"
+    text = bm.read_text()
+    old = (
+        "    walls\n    {\n        type patch;\n        faces\n        (\n"
+        "            (0 3 2 1)\n            (4 5 6 7)\n"
+        "            (0 1 5 4)\n            (3 7 6 2)\n        );\n    }")
+    new = (
+        "    ground\n    {\n        type wall;\n        faces\n        (\n"
+        "            (0 3 2 1)\n        );\n    }\n"
+        "    walls\n    {\n        type patch;\n        faces\n        (\n"
+        "            (4 5 6 7)\n            (0 1 5 4)\n"
+        "            (3 7 6 2)\n        );\n    }")
+    if old not in text:
+        raise RuntimeError("blockMeshDict walls patch not in expected form")
+    bm.write_text(text.replace(old, new))
+
+    # 2. 0/ fields: insert a `ground` entry just before the `model` patch.
+    for field, bc in _GROUND_BC.items():
+        f = case / "0" / field
+        t = f.read_text()
+        marker = "    model\n    {"
+        if marker not in t:
+            raise RuntimeError(f"0/{field}: model patch not found")
+        f.write_text(t.replace(marker, bc(params, moving) + marker, 1))
