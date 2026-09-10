@@ -236,13 +236,20 @@ class Runner:
     # iteration 2 of a healthy 15 m/s run, gone by ~25. Powered (prop disks)
     # takes much longer: a healthy 25 m/s run peaked at 1430 m/s at iteration
     # 23, stayed above the limit until ~50, and settled at 51 m/s (prop wash)
-    # with Cd 0.859 +/- 0.003. A real cavity jet never settles, so waiting
-    # costs only a minute or two of wasted solve on a broken STL.
+    # with Cd 0.859 +/- 0.003. The same frame's original CAD export was worse:
+    # 8030 m/s at iteration ~45, above the limit until ~80, settling at 56 m/s
+    # with Cd 0.899 +/- 0.012 — a trailing-25 window still holds 1220 m/s at
+    # iteration 100. So judge no earlier than auto-stop may first fire
+    # (AUTOSTOP_MIN_FRAC of the run): late enough for startup, and a run can
+    # still never be reported converged with a live hotspot. A real cavity jet
+    # never settles, so the only cost is solve time spent on a broken STL.
     MAX_SPEED_MIN_ITER = 100
 
     @classmethod
-    def _speed_not_physical(cls, umax: float | None, u0: float, it: int) -> bool:
-        return (umax is not None and it >= cls.MAX_SPEED_MIN_ITER
+    def _speed_not_physical(cls, umax: float | None, u0: float, it: int,
+                            iterations: int) -> bool:
+        start = max(cls.MAX_SPEED_MIN_ITER, cls.AUTOSTOP_MIN_FRAC * iterations)
+        return (umax is not None and it >= start
                 and umax > cls.MAX_SPEED_FACTOR * u0)
 
     @classmethod
@@ -408,7 +415,7 @@ class Runner:
                 # Physically impossible peak speed: catches a leaking interior
                 # cavity, which corrupts the forces while residuals look fine.
                 umax = post.read_max_speed(case)
-                if self._speed_not_physical(umax, u0, it):
+                if self._speed_not_physical(umax, u0, it, iterations):
                     if self._proc is not None:
                         self._kill_proc(self._proc)
                     raise RuntimeError(

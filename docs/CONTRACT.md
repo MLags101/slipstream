@@ -308,9 +308,13 @@ Neither old guard caught this: the divergence trip only fires above `|Cd| > 1e4`
   legitimately exceeds a few times freestream once the solve is under way. The
   impulsive start does (501 m/s at iteration 2 of a healthy 15 m/s run; a healthy
   powered 25 m/s run with prop disks peaked at 1430 m/s at iteration 23, stayed above
-  10x until ~50, then settled at 51 m/s with Cd 0.859 +/- 0.003), so the guard only
-  judges from `Runner.MAX_SPEED_MIN_ITER = 100` onward. A sustained cavity jet
-  (it never settles) still trips a minute or two into the solve.
+  10x until ~50, then settled at 51 m/s with Cd 0.859 +/- 0.003; the same frame's
+  original CAD export hit 8030 m/s and stayed above 10x until ~80, settling at 56 m/s
+  with Cd 0.899 +/- 0.012), so the guard only judges from
+  `max(Runner.MAX_SPEED_MIN_ITER = 100, AUTOSTOP_MIN_FRAC * iterations)` — 100 / 200 /
+  320 for coarse / medium / fine — the same point auto-stop may first fire, so a run
+  is never reported converged with a live hotspot. A cavity jet never settles and is
+  still caught, at the cost of that much solve time on a broken STL.
 - Result gains `"converged": bool` — `cd_std_last20pct <= 0.05 * |cd|`
   (`post.CONVERGED_REL_TOL`), false when `cd` is 0. Averaging a coefficient that never
   settled yields a confident-looking meaningless number; frontends MUST NOT present

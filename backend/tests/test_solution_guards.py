@@ -30,22 +30,31 @@ class TestSpeedGuard:
     def test_startup_spike_is_not_judged(self):
         # Measured on healthy runs at iteration 2: 501 m/s @ 15 m/s, and
         # 1068 m/s @ 25 m/s with prop disks (killed before this guard waited).
-        assert not Runner._speed_not_physical(501.5, 15.0, it=2)
-        assert not Runner._speed_not_physical(1068.0, 25.0, it=2)
-        assert not Runner._speed_not_physical(1068.0, 25.0, it=Runner.MAX_SPEED_MIN_ITER - 1)
+        assert not Runner._speed_not_physical(501.5, 15.0, it=2, iterations=250)
+        assert not Runner._speed_not_physical(1068.0, 25.0, it=2, iterations=500)
+        assert not Runner._speed_not_physical(
+            1068.0, 25.0, it=Runner.MAX_SPEED_MIN_ITER - 1, iterations=250)
 
     def test_slow_powered_startup_is_not_judged(self):
-        # Measured healthy powered run (5in disks, 25 m/s): trailing-25 peak
-        # was 1430 m/s at iteration 30 (the old cutoff killed it there) and
-        # 349 m/s at iteration 50, then settled to 51 m/s by ~70.
-        assert not Runner._speed_not_physical(1430.0, 25.0, it=30)
-        assert not Runner._speed_not_physical(349.0, 25.0, it=74)
-        assert not Runner._speed_not_physical(51.4, 25.0, it=150)
+        # Measured healthy powered runs, 25 m/s, medium (500 iterations):
+        # rebuilt STL — trailing-25 peak 1430 m/s at it 30, settled to 51 by ~70;
+        # original CAD — 8030 m/s at ~45 and still 1220 m/s in the trailing
+        # window at it 100 (a fixed 100-iteration cutoff killed it), 56 by ~90.
+        assert not Runner._speed_not_physical(1430.0, 25.0, it=30, iterations=500)
+        assert not Runner._speed_not_physical(1219.7, 25.0, it=100, iterations=500)
+        assert not Runner._speed_not_physical(55.9, 25.0, it=200, iterations=500)
+
+    def test_start_scales_with_run_length(self):
+        # Never before auto-stop may fire, never before MAX_SPEED_MIN_ITER.
+        assert not Runner._speed_not_physical(2.3e4, 25.0, it=199, iterations=500)
+        assert Runner._speed_not_physical(2.3e4, 25.0, it=200, iterations=500)
+        assert not Runner._speed_not_physical(2.3e4, 25.0, it=99, iterations=250)
+        assert Runner._speed_not_physical(2.3e4, 25.0, it=100, iterations=250)
 
     def test_sustained_jet_is_judged_once_past_startup(self):
-        assert Runner._speed_not_physical(2.3e4, 25.0, it=Runner.MAX_SPEED_MIN_ITER)
-        assert not Runner._speed_not_physical(40.0, 25.0, it=Runner.MAX_SPEED_MIN_ITER)
-        assert not Runner._speed_not_physical(None, 25.0, it=500)
+        assert Runner._speed_not_physical(2.3e4, 25.0, it=320, iterations=800)
+        assert not Runner._speed_not_physical(40.0, 25.0, it=320, iterations=800)
+        assert not Runner._speed_not_physical(None, 25.0, it=500, iterations=500)
 
     def test_guard_waits_for_the_window_to_clear_startup(self):
         from app import post
