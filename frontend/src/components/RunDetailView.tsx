@@ -177,7 +177,12 @@ export function RunDetailView({
       {run.status === "done" && run.result && (
         <>
           <ResultsPanel result={run.result} name={run.name} />
-          <ResultViewer runId={id} config={run.config} model={run.model} />
+          <ResultViewer
+            runId={id}
+            config={run.config}
+            model={run.model}
+            props={run.props_m}
+          />
         </>
       )}
 

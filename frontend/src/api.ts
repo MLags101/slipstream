@@ -151,6 +151,15 @@ export interface RunResult {
 }
 
 /** GET /api/runs/{id} */
+/** A prop disk in the prepared model frame (meters), as the solver placed it. */
+export interface PropDiskM {
+  center_m: [number, number, number];
+  /** Unit thrust axis (downwash flows the opposite way). */
+  axis: [number, number, number];
+  diameter_m: number;
+  thrust_N: number;
+}
+
 export interface RunDetail {
   id: string;
   name: string;
@@ -159,6 +168,8 @@ export interface RunDetail {
   message: string;
   config: RunConfig;
   model: ModelInfo | null;
+  /** Prop disks transformed into the viz frame; null when the run has none. */
+  props_m?: PropDiskM[] | null;
   mesh_cells: number | null;
   result: RunResult | null;
   error: string | null;

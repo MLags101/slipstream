@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import foamcase, ondemand, post, trim
+from . import foamcase, geometry, ondemand, post, trim
 from .runner import Runner
 
 DATA_DIR = Path(
@@ -341,12 +341,22 @@ def get_run(run_id: str):
         model["domain_bbox_m"] = foamcase.domain_bounds(
             model, ground=bool(s["config"].get("ground_plane")),
             symmetry=bool(s["config"].get("symmetry")))
+    # Prop disks in the prepared model frame (meters, same frame as the viz
+    # payloads), so result views can draw them where the solver put them.
+    cfg = s["config"]
+    props_m = None
+    if cfg.get("props") and s["model"] and "_c1" in s["model"]:
+        props_m = geometry.transform_props(
+            cfg["props"], cfg["unit"], float(cfg.get("yaw_deg") or 0),
+            float(cfg.get("pitch_deg") or 0), s["model"],
+            roll_deg=float(cfg.get("roll_deg") or 0))
     return {
         "id": s["id"], "name": s["name"], "status": s["status"],
         "progress": s["progress"], "message": s["message"],
         "created_at": s["created_at"], "config": s["config"],
         "group_id": s.get("group_id"),
         "model": model, "mesh_cells": s["mesh_cells"],
+        "props_m": props_m,
         "result": _compat_result(s["result"]), "error": s["error"],
     }
 

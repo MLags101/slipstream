@@ -5,6 +5,7 @@ import {
   api,
   ApiError,
   type ModelInfo,
+  type PropDiskM,
   type RunConfig,
   type SliceAxis,
   type StreamDensity,
@@ -32,6 +33,7 @@ interface Props {
   runId: string;
   config: RunConfig;
   model?: ModelInfo | null;
+  props?: PropDiskM[] | null;
 }
 
 const VIEWS: { label: string; dir: [number, number, number] }[] = [
@@ -113,14 +115,102 @@ function grayContext(surface: VizSurface, opaque: boolean): THREE.Mesh {
   );
 }
 
+const PROP_BLADES = 2;
+
+/**
+ * Stylized spinning-prop disks: translucent swept disk, solid rim, hub, and
+ * faint blade silhouettes, oriented on each disk's thrust axis. Purely visual —
+ * the solver models the prop as a momentum source over this disk.
+ */
+function propDisks(props: PropDiskM[]): THREE.Group {
+  const group = new THREE.Group();
+  const up = new THREE.Vector3(0, 0, 1);
+  for (const p of props) {
+    const r = p.diameter_m / 2;
+    const holder = new THREE.Group();
+    const fill = new THREE.Mesh(
+      new THREE.CircleGeometry(r, 64),
+      new THREE.MeshBasicMaterial({
+        color: 0x35c5dd,
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(r * 0.965, r, 96),
+      new THREE.MeshBasicMaterial({
+        color: 0x35c5dd,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    const hub = new THREE.Mesh(
+      new THREE.CircleGeometry(r * 0.07, 24),
+      new THREE.MeshBasicMaterial({ color: 0x35c5dd, side: THREE.DoubleSide }),
+    );
+    // Thin swept-edge band so the disk still reads as a prop when a side or
+    // front view looks at it edge-on (the flat layers vanish there).
+    const band = new THREE.Mesh(
+      new THREE.CylinderGeometry(r, r, p.diameter_m * 0.035, 96, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x35c5dd,
+        transparent: true,
+        opacity: 0.55,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    band.rotation.x = Math.PI / 2; // cylinder axis Y -> disk axis Z
+    band.renderOrder = 3;
+    holder.add(fill, rim, hub, band);
+    // Blade silhouettes: a slim tapered shape per blade, evenly spaced.
+    const blade = new THREE.Shape();
+    blade.moveTo(r * 0.08, -r * 0.035);
+    blade.quadraticCurveTo(r * 0.55, -r * 0.11, r * 0.94, -r * 0.03);
+    blade.lineTo(r * 0.94, r * 0.02);
+    blade.quadraticCurveTo(r * 0.55, r * 0.07, r * 0.08, r * 0.035);
+    blade.closePath();
+    const bladeGeom = new THREE.ShapeGeometry(blade, 12);
+    for (let i = 0; i < PROP_BLADES; i++) {
+      const b = new THREE.Mesh(
+        bladeGeom,
+        new THREE.MeshBasicMaterial({
+          color: 0x35c5dd,
+          transparent: true,
+          opacity: 0.4,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      b.rotation.z = (i / PROP_BLADES) * Math.PI * 2 + Math.PI / 5;
+      holder.add(b);
+    }
+    // Keep coplanar layers from z-fighting.
+    fill.renderOrder = 1;
+    holder.children.slice(3).forEach((c) => (c.renderOrder = 2));
+    rim.renderOrder = 3;
+    hub.renderOrder = 3;
+    holder.quaternion.setFromUnitVectors(up, new THREE.Vector3(...p.axis).normalize());
+    holder.position.set(...p.center_m);
+    group.add(holder);
+  }
+  return group;
+}
+
 /**
  * 3D result viewer: geometry / surface pressure (Cp) / flow slice (u_mag,
  * movable plane on any axis) / streamlines. Viz meshes are in meters centered
  * at the origin; the raw STL is rescaled, recentered and yaw-rotated the same
  * way the backend prepares it, so all modes overlay consistently.
  */
-export function ResultViewer({ runId, config, model }: Props) {
+export function ResultViewer({ runId, config, model, props }: Props) {
   const [mode, setMode] = useState<Mode>("surface");
+  const [showProps, setShowProps] = useState(true);
+  const hasProps = !!props && props.length > 0;
   const [sliceAxis, setSliceAxis] = useState<SliceAxis>("y");
   // Slice plane position, meters; undefined = center plane (fast path).
   const [slicePos, setSlicePos] = useState<number | undefined>(undefined);
@@ -254,15 +344,19 @@ export function ResultViewer({ runId, config, model }: Props) {
           if (!cache.stl) {
             const buf = await api.getStl(runId);
             const g = new STLLoader().parse(buf);
-            // Match backend prep: scale to meters, center at origin,
-            // rotate -yaw about Z.
+            // Match backend prep (geometry.prepare_stl): scale to meters,
+            // center, roll about X, pitch about Y, -yaw about Z, re-center.
             const k = UNIT_TO_METERS[config.unit];
             g.scale(k, k, k);
             g.computeBoundingBox();
             const c = g.boundingBox!.getCenter(new THREE.Vector3());
             g.translate(-c.x, -c.y, -c.z);
+            g.rotateX(((config.roll_deg ?? 0) * Math.PI) / 180);
             g.rotateY(((config.pitch_deg ?? 0) * Math.PI) / 180);
             g.rotateZ((-config.yaw_deg * Math.PI) / 180);
+            g.computeBoundingBox();
+            const c2 = g.boundingBox!.getCenter(new THREE.Vector3());
+            g.translate(-c2.x, -c2.y, -c2.z);
             g.computeVertexNormals();
             cache.stl = g;
           }
@@ -279,6 +373,7 @@ export function ResultViewer({ runId, config, model }: Props) {
           group.add(mesh);
           const sphere = frameOnce(viewer, mesh);
           group.add(buildSceneHelpers(sphere.radius, sphere.center));
+          if (showProps && hasProps) group.add(propDisks(props!));
           viewer.setContent(group);
         } else if (mode === "surface") {
           const viz = await getSurface();
@@ -300,6 +395,7 @@ export function ResultViewer({ runId, config, model }: Props) {
           );
           const group = new THREE.Group();
           group.add(mesh);
+          if (showProps && hasProps) group.add(propDisks(props!));
           frameOnce(viewer, mesh);
           viewer.setContent(group);
         } else if (mode === "streamlines") {
@@ -320,6 +416,7 @@ export function ResultViewer({ runId, config, model }: Props) {
           const group = new THREE.Group();
           group.add(segs);
           group.add(body);
+          if (showProps && hasProps) group.add(propDisks(props!));
           frameOnce(viewer, body);
           viewer.setContent(group);
         } else {
@@ -352,6 +449,7 @@ export function ResultViewer({ runId, config, model }: Props) {
           const group = new THREE.Group();
           group.add(sliceMesh);
           group.add(contextMesh);
+          if (showProps && hasProps) group.add(propDisks(props!));
           // Slice mode manages its own camera: snap normal to the plane when
           // the axis (or mode) changes; keep zoom when only the position moves.
           const box = new THREE.Box3().setFromObject(contextMesh);
@@ -380,7 +478,7 @@ export function ResultViewer({ runId, config, model }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, streamKey, sweeping]);
+  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, config.roll_deg, streamKey, sweeping, showProps, props]);
 
   /**
    * Stop the sweep: cancel any in-flight sampling and drop back to the
@@ -452,6 +550,7 @@ export function ResultViewer({ runId, config, model }: Props) {
       const group = new THREE.Group();
       group.add(sliceMesh);
       group.add(grayContext(cache.surface, false));
+      if (showProps && hasProps) group.add(propDisks(props!));
       // Content swap only — never re-frame or re-snap the locked slice camera.
       viewer.setContent(group);
 
@@ -566,6 +665,15 @@ export function ResultViewer({ runId, config, model }: Props) {
         >
           save png
         </button>
+        {hasProps && (
+          <button
+            className={`seg${showProps ? " seg-active" : ""}`}
+            title="Show or hide the propeller disks the solver modeled"
+            onClick={() => setShowProps((v) => !v)}
+          >
+            props
+          </button>
+        )}
         <div className="segmented">
           {(
             [
