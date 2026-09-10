@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import { formatLength, unitHint } from "../lib/unitCheck";
 import { api, type Quality, type RunConfig, type StlUnit } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
 import { nameFromFilename, formatInt } from "../lib/format";
@@ -42,6 +43,7 @@ export function NewRunView({ onCreated }: Props) {
   // nothing here re-runs anything live.
   const [name, setName] = useState("");
   const [unit, setUnit] = useState<StlUnit>("mm");
+  const unitWarn = dims ? unitHint(dims, unit) : null;
   const [windSpeed, setWindSpeed] = useState("15");
   const [yawDeg, setYawDeg] = useState("0");
   const [pitchDeg, setPitchDeg] = useState("0");
@@ -636,6 +638,23 @@ export function NewRunView({ onCreated }: Props) {
             {dims && (
               <div className="viewer-dims mono" title="model bounding box in the selected unit — check this looks right">
                 {dims.map((d) => (d < 100 ? d.toFixed(1) : Math.round(d)).toString()).join(" × ")} {unit}
+              </div>
+            )}
+            {unitWarn && (
+              <div className="viewer-unit-warn" role="alert">
+                <span>
+                  &#9888; Read as {unit}, this model is {formatLength(unitWarn.sizeM)} across
+                  {" — "}the STL was probably exported in a different unit.
+                </span>
+                {unitWarn.suggest && (
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={() => setUnit(unitWarn.suggest as StlUnit)}
+                  >
+                    use {unitWarn.suggest}
+                  </button>
+                )}
               </div>
             )}
             <div className="viewer-hint">

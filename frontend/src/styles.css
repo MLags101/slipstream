@@ -1750,6 +1750,25 @@ body {
   z-index: 2;
 }
 
+.viewer-unit-warn {
+  position: absolute;
+  top: 70px;
+  left: 14px;
+  right: 14px;
+  max-width: 460px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(40, 32, 12, 0.92);
+  border: 1px solid #5c4a1a;
+  border-left: 3px solid var(--readout);
+  color: #e7cf9a;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  z-index: 2;
+}
+
 .detail-actions {
   display: flex;
   gap: 6px;
