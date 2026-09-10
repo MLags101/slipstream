@@ -872,8 +872,8 @@ export function NewRunView({ onCreated }: Props) {
                     type="number"
                     value={pitchDeg}
                     onChange={(e) => setPitchDeg(e.target.value)}
-                    min={-90}
-                    max={90}
+                    min={-180}
+                    max={180}
                     step="any"
                     disabled={!file || trimOn}
                     title="positive pitch = nose-down forward-flight tilt"
