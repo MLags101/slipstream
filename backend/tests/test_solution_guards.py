@@ -34,6 +34,14 @@ class TestSpeedGuard:
         assert not Runner._speed_not_physical(1068.0, 25.0, it=2)
         assert not Runner._speed_not_physical(1068.0, 25.0, it=Runner.MAX_SPEED_MIN_ITER - 1)
 
+    def test_slow_powered_startup_is_not_judged(self):
+        # Measured healthy powered run (5in disks, 25 m/s): trailing-25 peak
+        # was 1430 m/s at iteration 30 (the old cutoff killed it there) and
+        # 349 m/s at iteration 50, then settled to 51 m/s by ~70.
+        assert not Runner._speed_not_physical(1430.0, 25.0, it=30)
+        assert not Runner._speed_not_physical(349.0, 25.0, it=74)
+        assert not Runner._speed_not_physical(51.4, 25.0, it=150)
+
     def test_sustained_jet_is_judged_once_past_startup(self):
         assert Runner._speed_not_physical(2.3e4, 25.0, it=Runner.MAX_SPEED_MIN_ITER)
         assert not Runner._speed_not_physical(40.0, 25.0, it=Runner.MAX_SPEED_MIN_ITER)

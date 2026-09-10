@@ -306,10 +306,11 @@ Neither old guard caught this: the divergence trip only fires above `|Cd| > 1e4`
   an assembly exported as overlapping shells) and the remedy (repair to a single
   watertight solid, or delete interior parts). Nothing in external aerodynamics
   legitimately exceeds a few times freestream once the solve is under way. The
-  impulsive start does (501 m/s at iteration 2 of a healthy 15 m/s run, 1068 m/s at
-  iteration 2 of a healthy powered 25 m/s run), so the guard only judges from
-  `Runner.MAX_SPEED_MIN_ITER = PEAK_WINDOW + 5` onward, when the trailing peak
-  window no longer contains startup. A sustained cavity jet still trips ~30 s in.
+  impulsive start does (501 m/s at iteration 2 of a healthy 15 m/s run; a healthy
+  powered 25 m/s run with prop disks peaked at 1430 m/s at iteration 23, stayed above
+  10x until ~50, then settled at 51 m/s with Cd 0.859 +/- 0.003), so the guard only
+  judges from `Runner.MAX_SPEED_MIN_ITER = 100` onward. A sustained cavity jet
+  (it never settles) still trips a minute or two into the solve.
 - Result gains `"converged": bool` — `cd_std_last20pct <= 0.05 * |cd|`
   (`post.CONVERGED_REL_TOL`), false when `cd` is 0. Averaging a coefficient that never
   settled yields a confident-looking meaningless number; frontends MUST NOT present

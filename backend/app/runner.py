@@ -232,10 +232,13 @@ class Runner:
     # aerodynamics legitimately exceeds a few times freestream.
     MAX_SPEED_FACTOR = 10.0
     # The peak probe reports over a trailing PEAK_WINDOW, but the impulsive
-    # start spikes far past the limit for the first few iterations (501 m/s at
-    # iteration 2 of a healthy 15 m/s run; 1070 m/s at iteration 2 of a healthy
-    # powered 25 m/s run). Only judge once that window has slid past startup.
-    MAX_SPEED_MIN_ITER = post.PEAK_WINDOW + 5
+    # start spikes far past the limit before it settles. Unpowered: 501 m/s at
+    # iteration 2 of a healthy 15 m/s run, gone by ~25. Powered (prop disks)
+    # takes much longer: a healthy 25 m/s run peaked at 1430 m/s at iteration
+    # 23, stayed above the limit until ~50, and settled at 51 m/s (prop wash)
+    # with Cd 0.859 +/- 0.003. A real cavity jet never settles, so waiting
+    # costs only a minute or two of wasted solve on a broken STL.
+    MAX_SPEED_MIN_ITER = 100
 
     @classmethod
     def _speed_not_physical(cls, umax: float | None, u0: float, it: int) -> bool:
