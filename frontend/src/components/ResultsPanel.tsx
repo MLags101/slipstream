@@ -68,9 +68,21 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
     warnings.push(
       "Mesh quality is poor (high skewness / non-orthogonality) — results may be unreliable. A finer quality setting usually helps.",
     );
-  if (result.cd_std_last20pct > 0.02 * Math.max(Math.abs(result.cd), 0.1))
+  // The backend's own verdict wins when present; it decides against the same
+  // number that gets averaged. Older runs fall back to the local estimate.
+  const unconverged =
+    result.converged === false ||
+    (result.converged === undefined &&
+      result.cd_std_last20pct > 0.02 * Math.max(Math.abs(result.cd), 0.1));
+  if (unconverged)
     warnings.push(
-      "Cd was still wandering at the end — it may not be fully converged. Try a finer mesh.",
+      `Cd never settled — it varied by ±${formatCoeff(
+        result.cd_std_last20pct,
+        3,
+      )} over the averaged window, so the value below is an average of a moving ` +
+        "number, not a result. This usually means a broken or self-intersecting " +
+        "STL rather than too coarse a mesh; repair the geometry into one watertight " +
+        "solid and re-run.",
     );
 
   // v2 drag breakdown — null (or absent) for runs solved before the feature.
@@ -102,8 +114,10 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
             ))}
           </div>
         )}
-        <div className="hero-stat">
-          <div className="hero-label">Drag coefficient</div>
+        <div className={`hero-stat${unconverged ? " hero-stat-untrusted" : ""}`}>
+          <div className="hero-label">
+            Drag coefficient{unconverged && " — not converged"}
+          </div>
           <div className="hero-value mono">{formatCoeff(result.cd)}</div>
           <div className="hero-sub">
             averaged over final 20% of {formatInt(result.iterations)} iterations

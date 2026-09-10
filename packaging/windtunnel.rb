@@ -4,15 +4,15 @@
 # GitHub account, put this file at Casks/windtunnel.rb, and update the
 # version/sha256 on each release (sha256 is printed by the release workflow).
 # Users then install with:
-#   brew install --cask --no-quarantine YOUR_GITHUB_USERNAME/windtunnel/windtunnel
+#   brew install --cask --no-quarantine OwenTWebb/windtunnel/windtunnel
 cask "windtunnel" do
   version "0.1.0"
   sha256 "REPLACE_WITH_SHA256_FROM_RELEASE_WORKFLOW"
 
-  url "https://github.com/YOUR_GITHUB_USERNAME/windtunnel/releases/download/v#{version}/WindTunnel-v#{version}-macos-arm64.zip"
+  url "https://github.com/OwenTWebb/windtunnel/releases/download/v#{version}/WindTunnel-v#{version}-macos-arm64.zip"
   name "WindTunnel"
   desc "Virtual wind tunnel: drop an STL, get OpenFOAM CFD analysis"
-  homepage "https://github.com/YOUR_GITHUB_USERNAME/windtunnel"
+  homepage "https://github.com/OwenTWebb/windtunnel"
 
   depends_on cask: "gerlero/openfoam/openfoam"
   depends_on arch: :arm64

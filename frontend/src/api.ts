@@ -33,6 +33,11 @@ export interface RunConfig {
   yaw_sweep?: number[];
   /** Positive pitch = nose-down forward-flight tilt. */
   pitch_deg?: number;
+  /**
+   * Roll about X, applied before pitch and yaw. Incompatible with half-model
+   * symmetry, which needs the model level in the Y=0 mirror plane.
+   */
+  roll_deg?: number;
   /** v2.1: like yaw_sweep but about the pitch axis (mutually exclusive). */
   pitch_sweep?: number[];
   /**
@@ -47,6 +52,12 @@ export interface RunConfig {
   ground_plane?: boolean;
   /** Ground type when ground_plane is set: "moving" rolling road (default) or "static". */
   ground?: "moving" | "static";
+  /**
+   * Half-model symmetry: solve only the +Y half of the domain with a symmetry
+   * plane at Y=0 (the X-Z plane), ~2× faster. Valid only for symmetric models
+   * at 0° yaw, without props/trim/yaw-sweep.
+   */
+  symmetry?: boolean;
   /**
    * v3.1: solve the forward-flight trim attitude. Requires `props`; mutually
    * exclusive with sweeps. The backend iterates runs (shared group) adjusting
@@ -93,6 +104,10 @@ export interface ModelInfo {
   triangles: number;
   /** False if the STL isn't a closed, manifold surface (may mesh poorly). */
   watertight?: boolean;
+  /** True if the model is Y-symmetric enough to solve as a half-model. */
+  symmetric?: boolean;
+  /** Measured asymmetry across the Y=0 plane (smaller = more symmetric). */
+  symmetry_error?: number;
 }
 
 /** GET /api/runs/{id}/result (also embedded in RunDetail.result when done) */
@@ -112,11 +127,19 @@ export interface RunResult {
   mesh_cells: number;
   runtime_s: number;
   cd_std_last20pct: number;
+  /**
+   * v7.1: false when Cd never settled, so `cd` is the average of a moving
+   * number rather than a result — do not present it as one. Undefined for runs
+   * solved before the flag existed.
+   */
+  converged?: boolean;
   /** v2 drag breakdown — null for runs solved before the feature. */
   drag_pressure_N: number | null;
   drag_viscous_N: number | null;
   /** v2: true when the solver auto-stopped on Cd convergence. */
   stopped_early: boolean;
+  /** True when solved as a half-model with a Y=0 symmetry plane. */
+  symmetry?: boolean;
   /** Reynolds number on the model's streamwise length. */
   reynolds?: number;
   mesh_quality?: {

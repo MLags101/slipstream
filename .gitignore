@@ -7,3 +7,7 @@ dist/
 backend/build/
 backend/dist/
 backend/*.spec
+
+# Personal models / scratch configs — never publish
+data_prep/
+frontend/public/__test_*

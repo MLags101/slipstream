@@ -164,8 +164,13 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     cfg.setdefault("name", stl.filename or "unnamed")
     cfg.setdefault("yaw_deg", 0)
     cfg.setdefault("pitch_deg", 0)
+    cfg.setdefault("roll_deg", 0)
     cfg.setdefault("rho", 1.225)
     cfg.setdefault("nu", 1.5e-5)
+
+    roll = cfg.get("roll_deg")
+    if not (_num(roll) and -180 <= roll <= 180):
+        raise HTTPException(422, "roll_deg must be a number in [-180, 180]")
 
     ref = cfg.get("ref_area_cm2")
     if ref is not None and not (_num(ref) and ref > 0):
@@ -175,6 +180,9 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         raise HTTPException(422, "ground_plane must be true or false")
     if cfg.get("ground") not in (None, "moving", "static"):
         raise HTTPException(422, "ground must be 'moving' or 'static'")
+
+    if "symmetry" in cfg and not isinstance(cfg["symmetry"], bool):
+        raise HTTPException(422, "symmetry must be true or false")
 
     props = cfg.get("props")
     if props is not None:
@@ -220,6 +228,20 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
             raise HTTPException(422, "trim.max_iters must be an integer in [1, 10]")
         if not _num(td) or td <= 0:
             raise HTTPException(422, "trim.tol_deg must be a positive number")
+
+    # Half-model symmetry only makes sense for a left-right-symmetric setup:
+    # 0° yaw, 0° roll, no yaw sweep, no props, no trim. Pitch (about Y)
+    # preserves the left-right symmetry, so pitch_deg / pitch_sweep are
+    # allowed; roll (about X) tips the model out of the Y=0 mirror plane and
+    # does not. The runtime also checks the geometry itself is mirror-symmetric
+    # (auto-cancel).
+    if cfg.get("symmetry"):
+        if (float(cfg.get("yaw_deg") or 0) != 0
+                or float(cfg.get("roll_deg") or 0) != 0 or "yaw" in sweeps
+                or cfg.get("props") or trim_req is not None):
+            raise HTTPException(
+                422, "symmetry requires 0\N{DEGREE SIGN} yaw and roll and no "
+                     "props/trim/yaw-sweep")
 
     data = await stl.read()
     if len(data) < 84:
@@ -317,7 +339,8 @@ def get_run(run_id: str):
     model = dict(s["model"]) if s["model"] else None
     if model and "bbox_m" in model:
         model["domain_bbox_m"] = foamcase.domain_bounds(
-            model, ground=bool(s["config"].get("ground_plane")))
+            model, ground=bool(s["config"].get("ground_plane")),
+            symmetry=bool(s["config"].get("symmetry")))
     return {
         "id": s["id"], "name": s["name"], "status": s["status"],
         "progress": s["progress"], "message": s["message"],
@@ -456,13 +479,16 @@ def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
     if s["status"] != "done":
         raise HTTPException(404, "visualization not available (run not done)")
     ax = {"x": 0, "y": 1, "z": 2}[axis]
-    _db = foamcase.domain_bounds(s["model"], ground=bool(s["config"].get("ground_plane")))
+    _db = foamcase.domain_bounds(
+        s["model"], ground=bool(s["config"].get("ground_plane")),
+        symmetry=bool(s["config"].get("symmetry")))
     lo, hi = _db[0][ax], _db[1][ax]
     eps = 0.01 * (hi - lo)
     pos = min(max(pos or 0.0, lo + eps), hi - eps)
     try:
         payload = ondemand.slice_json(DATA_DIR / run_id, axis, pos,
-                                      float(s["config"].get("rho") or 1.225))
+                                      float(s["config"].get("rho") or 1.225),
+                                      symmetry=bool(s["config"].get("symmetry")))
     except RuntimeError as e:
         raise HTTPException(422, _compacted_msg(s) or str(e))
     payload["axis"] = axis
@@ -482,7 +508,8 @@ def get_viz_streamlines(run_id: str, density: str = "med", region: str = "full")
     try:
         return ondemand.streamlines_json(DATA_DIR / run_id, s["model"],
                                          float(s["config"].get("rho") or 1.225),
-                                         density=density, region=region)
+                                         density=density, region=region,
+                                         symmetry=bool(s["config"].get("symmetry")))
     except RuntimeError as e:
         raise HTTPException(422, _compacted_msg(s) or str(e))
 

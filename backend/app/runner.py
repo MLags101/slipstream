@@ -224,14 +224,37 @@ class Runner:
     AUTOSTOP_REL_TOL = 0.005
     AUTOSTOP_MIN_FRAC = 0.4
 
+    # A solution is physically impossible long before |Cd| reaches the 1e4
+    # divergence trip. A broken surface can leave a near-sealed interior cavity
+    # whose pressure solution drives a jet through one bad face — measured at
+    # 900x freestream on a real assembly export — which corrupts the force
+    # integrals while residuals still look healthy. Nothing in external
+    # aerodynamics legitimately exceeds a few times freestream.
+    MAX_SPEED_FACTOR = 10.0
+
     @classmethod
     def _converged(cls, cd: list[float], it: int, iterations: int) -> bool:
         if it < cls.AUTOSTOP_MIN_FRAC * iterations or len(cd) < cls.AUTOSTOP_WINDOW:
             return False
+        return cls._cd_scatter(cd) is not None and cls._settled(cd)
+
+    @classmethod
+    def _cd_scatter(cls, cd: list[float]) -> tuple[float, float] | None:
+        """(|mean|, std) of Cd over the trailing window, or None if too short."""
+        if len(cd) < cls.AUTOSTOP_WINDOW:
+            return None
         tail = cd[-cls.AUTOSTOP_WINDOW:]
         mean = sum(tail) / len(tail)
         std = (sum((x - mean) ** 2 for x in tail) / len(tail)) ** 0.5
-        return std < max(cls.AUTOSTOP_ABS_TOL, cls.AUTOSTOP_REL_TOL * abs(mean))
+        return abs(mean), std
+
+    @classmethod
+    def _settled(cls, cd: list[float]) -> bool:
+        got = cls._cd_scatter(cd)
+        if got is None:
+            return False
+        mean, std = got
+        return std < max(cls.AUTOSTOP_ABS_TOL, cls.AUTOSTOP_REL_TOL * mean)
 
     @staticmethod
     def _request_stop(case: Path) -> bool:
@@ -265,7 +288,20 @@ class Runner:
         model = geometry.prepare_stl(
             str(rd / "model.stl"), config["unit"], float(config.get("yaw_deg") or 0),
             str(rd / "model_prepared.stl"),
-            pitch_deg=float(config.get("pitch_deg") or 0))
+            pitch_deg=float(config.get("pitch_deg") or 0),
+            roll_deg=float(config.get("roll_deg") or 0))
+
+        # Half-model symmetry is only valid if the model really is mirror-
+        # symmetric about its centerline (Y=0). If not, auto-cancel here
+        # rather than silently solving half of an asymmetric body.
+        if config.get("symmetry") and not model.get("symmetric"):
+            self.update(run_id, model=model, status="cancelled", progress=0.0,
+                        error=None, message=(
+                            "Symmetry requested but the model isn't mirror-"
+                            "symmetric about its centerline (Y=0) — re-run "
+                            "without symmetry."))
+            return
+
         params = foamcase.compute_params(model, config)
         iterations = params.pop("iterations")
 
@@ -276,6 +312,8 @@ class Runner:
             # Rolling road unless the user asked for a fixed ground.
             foamcase.add_ground_plane(
                 case, params, moving=config.get("ground") != "static")
+        if config.get("symmetry"):
+            foamcase.add_symmetry_plane(case)
         tri_dir.mkdir(parents=True, exist_ok=True)
         (rd / "model_prepared.stl").replace(tri_dir / "model.stl")
         self.update(run_id, progress=0.1, message="Case generated")
@@ -312,7 +350,8 @@ class Runner:
                                         "disk zones")
             props = geometry.transform_props(
                 props_cfg, config["unit"], float(config.get("yaw_deg") or 0),
-                float(config.get("pitch_deg") or 0), model)
+                float(config.get("pitch_deg") or 0), model,
+                roll_deg=float(config.get("roll_deg") or 0))
             foamcase.write_prop_disks(case, props,
                                       float(config.get("rho") or 1.225),
                                       params["base_cell"])
@@ -336,6 +375,7 @@ class Runner:
         self.update(run_id, message=f"Running simpleFoam on {n} cores "
                                     f"(0/{iterations} iterations)")
 
+        u0 = float(config["wind_speed"])
         stop = {"requested": False}
 
         def solve_progress():
@@ -352,6 +392,21 @@ class Runner:
                         f"solution diverged at iteration {it} (Cd={cd_last:.3g}). "
                         "Try a finer mesh, a lower wind speed, or check the STL "
                         "for holes/self-intersections.")
+                # Physically impossible peak speed: catches a leaking interior
+                # cavity, which corrupts the forces while residuals look fine.
+                umax = post.read_max_speed(case)
+                limit = self.MAX_SPEED_FACTOR * u0
+                if umax is not None and umax > limit:
+                    if self._proc is not None:
+                        self._kill_proc(self._proc)
+                    raise RuntimeError(
+                        f"solution is not physical at iteration {it}: peak speed "
+                        f"{umax:.3g} m/s is {umax / u0:.0f}x the {u0:g} m/s "
+                        "freestream. This is almost always a sealed or leaking "
+                        "cavity inside the geometry — typical of an assembly "
+                        "exported as overlapping shells. Repair the STL into a "
+                        "single watertight solid (or delete interior parts) and "
+                        "re-run.")
                 frac = min(1.0, it / iterations)
                 suffix = " - converged, stopping early" if stop["requested"] else ""
                 self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),
@@ -388,10 +443,11 @@ class Runner:
         self.update(run_id, progress=0.94, message="Building visualization data")
         rho = float(config.get("rho") or 1.225)
         u_inf = float(config["wind_speed"])
-        surface = post.build_surface_viz(case, rho, u_inf)
+        symmetry = bool(config.get("symmetry"))
+        surface = post.build_surface_viz(case, rho, u_inf, symmetry=symmetry)
         (rd / "viz_surface.json").write_text(json.dumps(surface))
         for axis in ("y", "z"):
-            sl = post.build_slice_viz(case, axis, rho)
+            sl = post.build_slice_viz(case, axis, rho, symmetry=symmetry)
             (rd / f"viz_slice_{axis}.json").write_text(json.dumps(sl))
 
         self.update(run_id, progress=0.98, message="Computing final coefficients")

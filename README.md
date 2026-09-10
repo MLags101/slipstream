@@ -21,6 +21,18 @@ no meshing tutorials, no cloud fees.
   aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
   that finds the forward-flight attitude and per-motor thrust for weight and speed
 - Runs **auto-stop when converged**, saving 30–40% of solve time
+- **Half-model symmetry solves** for mirror-symmetric shapes, and a rolling-road
+  ground plane for vehicles
+
+## Why
+
+Commercial CFD tools are either too expensive or take far too long to learn.
+Open-source solvers like OpenFOAM are just as accurate, but they give you text
+dictionaries and a terminal, not the smooth workflow of enterprise software. As a
+college student I have neither the budget for licenses nor the time to hand-build
+meshes for every design change. WindTunnel keeps OpenFOAM's solver and handles all
+the setup around it, so a full 3D velocity and pressure analysis starts with
+dropping in an STL.
 
 ## Getting started (3 steps)
 
@@ -28,12 +40,10 @@ no meshing tutorials, no cloud fees.
    ```sh
    brew install --cask gerlero/openfoam/openfoam
    ```
-2. **Install WindTunnel** — either:
-   ```sh
-   brew install --cask --no-quarantine YOUR_GITHUB_USERNAME/windtunnel/windtunnel
-   ```
-   or download `WindTunnel.zip` from [Releases](../../releases), unzip into
-   `/Applications`, then see the note below about first launch.
+2. **Install WindTunnel**: [build from source](#building-from-source) (a few
+   minutes). Prebuilt `WindTunnel.zip` downloads will be posted under
+   [Releases](../../releases). After unzipping one into `/Applications`, read the
+   first-launch note below.
 3. **Run your first analysis**: open WindTunnel, drop an STL onto the target,
    check the unit (mm for 3D-print exports), set a wind speed, pick **coarse**
    quality, and hit **Run analysis**. A few minutes later you'll have a drag
@@ -45,11 +55,7 @@ no meshing tutorials, no cloud fees.
 WindTunnel is free and unsigned — an Apple Developer certificate costs $99/year,
 which this project doesn't have (yet). The app is open source, and you can read or
 build every line of it. To open it the first time:
-**System Settings → Privacy & Security → "Open Anyway"**, or install via the
-Homebrew command above (`--no-quarantine` skips the warning entirely).
-
-**Want the warning gone for everyone?** [Sponsor the project](../../sponsors) —
-the first goal is exactly that certificate.
+**System Settings → Privacy & Security → "Open Anyway"**.
 
 ## How it works
 

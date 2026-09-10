@@ -4,6 +4,22 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { api, type Quality, type RunConfig, type StlUnit } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
 import { nameFromFilename, formatInt } from "../lib/format";
+import { defaultPropPlacements } from "../lib/geometry";
+
+/** Keep a nudged angle in (-180, 180] so the inputs stay readable. */
+function wrapDeg(v: number): number {
+  const w = ((((v + 180) % 360) + 360) % 360) - 180;
+  return Math.round((w === -180 ? 180 : w) * 10) / 10;
+}
+
+/**
+ * Functional updater for a nudge button. Must read the previous value from
+ * setState rather than the render closure, or two quick clicks both apply to
+ * the same stale angle and the second silently replaces the first.
+ */
+function nudgeDeg(delta: number): (prev: string) => string {
+  return (prev) => String(wrapDeg((parseFloat(prev) || 0) + delta));
+}
 
 interface Props {
   onCreated: (id: string) => void;
@@ -29,6 +45,7 @@ export function NewRunView({ onCreated }: Props) {
   const [windSpeed, setWindSpeed] = useState("15");
   const [yawDeg, setYawDeg] = useState("0");
   const [pitchDeg, setPitchDeg] = useState("0");
+  const [rollDeg, setRollDeg] = useState("0");
   const [sweepEnabled, setSweepEnabled] = useState(false);
   const [sweepParam, setSweepParam] = useState<"yaw" | "pitch">("yaw");
   const [sweepAngles, setSweepAngles] = useState("0, 15, 30, 45");
@@ -42,6 +59,7 @@ export function NewRunView({ onCreated }: Props) {
   const trimOn = propsEnabled && trimEnabled;
   const [refArea, setRefArea] = useState(""); // cm², blank = auto (frontal)
   const [groundPlane, setGroundPlane] = useState(false);
+  const [symmetry, setSymmetry] = useState(false);
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -53,16 +71,13 @@ export function NewRunView({ onCreated }: Props) {
   const stlCenterRef = useRef<THREE.Vector3>(new THREE.Vector3());
   const framedRef = useRef(false);
   const modelGroupRef = useRef<THREE.Group | null>(null);
+  const modelMeshRef = useRef<THREE.Mesh | null>(null);
   const propGroupsRef = useRef<THREE.Group[]>([]);
-  const [tool, setTool] = useState<"orbit" | "rotate">("orbit");
+  // Slicer-style selection: click the model to select it, then rotate it with
+  // the explicit per-axis controls. Dragging never changes the attitude.
+  const [selected, setSelected] = useState(false);
   // Latest values for the (once-attached) pointer handlers.
-  const latestRef = useRef<{
-    tool: "orbit" | "rotate";
-    propRows: { x: string; y: string; z: string; d: string; t: string }[];
-    propsEnabled: boolean;
-    yawLocked: boolean;
-    pitchLocked: boolean;
-  }>({ tool: "orbit", propRows: [], propsEnabled: false, yawLocked: false, pitchLocked: false });
+  const latestRef = useRef<{ propsEnabled: boolean }>({ propsEnabled: false });
 
   // Viewer lifecycle — created once the preview host exists.
   useEffect(() => {
@@ -88,19 +103,94 @@ export function NewRunView({ onCreated }: Props) {
     trimOn || (sweepEnabled && sweepParam === "pitch")
       ? 0
       : parseFloat(pitchDeg) || 0;
+  const previewRoll = parseFloat(rollDeg) || 0;
 
-  latestRef.current = {
-    tool,
-    propRows,
-    propsEnabled,
-    yawLocked: sweepEnabled && sweepParam === "yaw",
-    pitchLocked: trimOn || (sweepEnabled && sweepParam === "pitch"),
-  };
+  // Half-model symmetry is only valid at 0° yaw and without props/trim/yaw-sweep
+  // (pitch is fine — the mirror plane is Y=0). trimOn implies propsEnabled.
+  const symmetryAllowed =
+    parseFloat(yawDeg) === 0 &&
+    previewRoll === 0 &&
+    !propsEnabled &&
+    !(sweepEnabled && sweepParam === "yaw");
 
+  // Force the symmetry checkbox off whenever it becomes disallowed (nonzero
+  // yaw typed, props/trim enabled, or a yaw sweep queued).
   useEffect(() => {
-    const viewer = viewerRef.current;
-    if (viewer) viewer.controls.enableRotate = tool === "orbit";
-  }, [tool, file]);
+    if (!symmetryAllowed && symmetry) setSymmetry(false);
+  }, [symmetryAllowed, symmetry]);
+
+  latestRef.current = { propsEnabled };
+
+  const yawLocked = sweepEnabled && sweepParam === "yaw";
+  const pitchLocked = trimOn || (sweepEnabled && sweepParam === "pitch");
+
+  // The three model axes, in the order the backend applies them. Roll is never
+  // swept or solved, so it is always editable.
+  const axisRows = [
+    {
+      axis: "X",
+      name: "roll",
+      value: rollDeg,
+      set: setRollDeg,
+      locked: false,
+      lockNote: "",
+      nudge: (d: number) => setRollDeg(nudgeDeg(d)),
+    },
+    {
+      axis: "Y",
+      name: "pitch",
+      value: pitchDeg,
+      set: setPitchDeg,
+      locked: pitchLocked,
+      lockNote: trimOn ? "solved by trim" : "swept",
+      nudge: (d: number) => setPitchDeg(nudgeDeg(d)),
+    },
+    {
+      axis: "Z",
+      name: "yaw",
+      value: yawDeg,
+      set: setYawDeg,
+      locked: yawLocked,
+      lockNote: "swept",
+      nudge: (d: number) => setYawDeg(nudgeDeg(d)),
+    },
+  ];
+
+  // New rotor disks land on the frame's corners rather than stacked at its
+  // centre; extra ones go to the next free slot of a wider layout.
+  const seedPropRows = (count: number) => {
+    const c = stlCenterRef.current;
+    const size = dims ?? [1, 1, 1];
+    const placements = defaultPropPlacements([c.x, c.y, c.z], size, count);
+
+    // Drop each disk onto whatever is directly under it rather than onto the
+    // bounding-box lid — on most frames the tallest thing is the battery or
+    // camera in the middle, nowhere near where the rotors sit.
+    const geo = geometryRef.current;
+    const probe = geo ? new THREE.Mesh(geo) : null;
+    const ray = new THREE.Raycaster();
+    const down = new THREE.Vector3(0, 0, -1);
+    const clearance = Math.abs(size[2]) * 0.02;
+    const surfaceZ = (x: number, y: number): number | null => {
+      if (!probe) return null;
+      // Geometry is centred on the origin; prop coords are STL-absolute.
+      ray.set(new THREE.Vector3(x - c.x, y - c.y, Math.abs(size[2])), down);
+      const hit = ray.intersectObject(probe, false)[0];
+      return hit ? hit.point.z + c.z : null;
+    };
+
+    return placements.map((p) => {
+      const top = surfaceZ(p.x, p.y);
+      const z = top === null ? p.z : Math.round((top + clearance) * 10) / 10;
+      return {
+        x: String(p.x),
+        y: String(p.y),
+        z: String(z),
+        d: String(p.d),
+        t: "300",
+      };
+    });
+  };
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -112,16 +202,16 @@ export function NewRunView({ onCreated }: Props) {
 
     const propGroups: THREE.Group[] = [];
     const modelGroup = new THREE.Group();
-    modelGroup.add(
-      new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({
-          color: 0x9fa8b3,
-          roughness: 0.6,
-          metalness: 0.15,
-        }),
-      ),
+    const modelMesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({
+        color: 0x9fa8b3,
+        roughness: 0.6,
+        metalness: 0.15,
+      }),
     );
+    modelGroup.add(modelMesh);
+    modelMeshRef.current = modelMesh;
 
     // Propeller disks, in the model frame so they rotate with it.
     if (propsEnabled) {
@@ -163,9 +253,22 @@ export function NewRunView({ onCreated }: Props) {
     propGroupsRef.current = propGroups;
     modelGroupRef.current = modelGroup;
 
-    // Backend prep order: R = Rz(-yaw) · Ry(pitch). Euler "ZYX" composes
-    // exactly Rz(z)·Ry(y)·Rx(x).
+    // Selection outline, inside the model group so it tilts with the model —
+    // the same cue a slicer gives you for "this is the object you're editing".
+    if (selected) {
+      geometry.computeBoundingBox();
+      const box = new THREE.Box3Helper(
+        geometry.boundingBox!.clone(),
+        new THREE.Color(0x35c5dd),
+      );
+      (box.material as THREE.LineBasicMaterial).depthTest = false;
+      modelGroup.add(box);
+    }
+
+    // Backend prep order: R = Rz(-yaw) · Ry(pitch) · Rx(roll). Euler "ZYX"
+    // composes exactly Rz(z)·Ry(y)·Rx(x).
     modelGroup.rotation.order = "ZYX";
+    modelGroup.rotation.x = THREE.MathUtils.degToRad(previewRoll);
     modelGroup.rotation.y = THREE.MathUtils.degToRad(previewPitch);
     modelGroup.rotation.z = -THREE.MathUtils.degToRad(previewYaw);
 
@@ -196,15 +299,44 @@ export function NewRunView({ onCreated }: Props) {
       group.add(roadGrid);
     }
 
+    // Symmetry plane: the X-Z plane at Y=0 (normal along Y). Drawn in world
+    // space — the backend solves only the +Y half, mirroring across this plane.
+    if (symmetry) {
+      const plane = new THREE.Mesh(
+        new THREE.PlaneGeometry(r * 3, r * 3),
+        new THREE.MeshStandardMaterial({
+          color: 0x35c5dd,
+          roughness: 0.9,
+          transparent: true,
+          opacity: 0.18,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
+      plane.rotation.x = Math.PI / 2; // XY plane -> X-Z plane, normal along Y
+      group.add(plane);
+    }
+
     viewer.setContent(group);
     if (!framedRef.current) {
       viewer.frame(new THREE.Vector3(0, 0, 0), r);
       framedRef.current = true;
     }
-  }, [file, propsEnabled, propRows, previewYaw, previewPitch, groundPlane]);
+  }, [
+    file,
+    propsEnabled,
+    propRows,
+    previewYaw,
+    previewPitch,
+    previewRoll,
+    groundPlane,
+    symmetry,
+    selected,
+  ]);
 
-  // Slicer-style direct manipulation: drag a disk to slide it on its rotor
-  // plane (hold Shift for height); with the rotate tool, drag to set yaw/pitch.
+  // Direct manipulation: drag a disk to slide it on its rotor plane (hold
+  // Shift for height). The model itself is never rotated by dragging — click
+  // it to select, then use the axis controls, like a 3D printer slicer.
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || !file) return;
@@ -213,8 +345,9 @@ export function NewRunView({ onCreated }: Props) {
     const ndc = new THREE.Vector2();
     let drag:
       | { kind: "disk"; holder: THREE.Group; plane: THREE.Plane; shift: boolean }
-      | { kind: "rotate"; x0: number; y0: number; yaw0: number; pitch0: number }
       | null = null;
+    // A press that neither drags a disk nor moves far is a selection click.
+    let press: { x: number; y: number; onModel: boolean } | null = null;
 
     const toNdc = (e: PointerEvent) => {
       const r = el.getBoundingClientRect();
@@ -237,6 +370,14 @@ export function NewRunView({ onCreated }: Props) {
       return null;
     };
 
+    const overModel = (e: PointerEvent): boolean => {
+      const mesh = modelMeshRef.current;
+      if (!mesh) return false;
+      toNdc(e);
+      ray.setFromCamera(ndc, viewer.camera);
+      return ray.intersectObject(mesh, false).length > 0;
+    };
+
     const localZWorld = () => {
       const mg = modelGroupRef.current!;
       return new THREE.Vector3(0, 0, 1).applyQuaternion(mg.quaternion).normalize();
@@ -246,20 +387,13 @@ export function NewRunView({ onCreated }: Props) {
       if (e.button !== 0) return;
       const mg = modelGroupRef.current;
       if (!mg) return;
-      if (latestRef.current.tool === "rotate") {
-        drag = {
-          kind: "rotate",
-          x0: e.clientX,
-          y0: e.clientY,
-          yaw0: -THREE.MathUtils.radToDeg(mg.rotation.z),
-          pitch0: THREE.MathUtils.radToDeg(mg.rotation.y),
-        };
-        viewer.controls.enabled = false;
-        try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
+      const holder = pickDisk(e);
+      if (!holder) {
+        // Remember the press so pointerup can tell a click (select) from an
+        // orbit drag. OrbitControls keeps handling the camera either way.
+        press = { x: e.clientX, y: e.clientY, onModel: overModel(e) };
         return;
       }
-      const holder = pickDisk(e);
-      if (!holder) return;
       const zAxis = localZWorld();
       const wp = holder.getWorldPosition(new THREE.Vector3());
       let plane: THREE.Plane;
@@ -275,30 +409,13 @@ export function NewRunView({ onCreated }: Props) {
       }
       drag = { kind: "disk", holder, plane, shift: e.shiftKey };
       viewer.controls.enabled = false;
+      e.stopPropagation();
       try { el.setPointerCapture(e.pointerId); } catch { /* synthetic */ }
     };
 
     const onMove = (e: PointerEvent) => {
       if (!drag) {
-        el.style.cursor =
-          latestRef.current.tool === "rotate"
-            ? "ew-resize"
-            : pickDisk(e)
-              ? "grab"
-              : "";
-        return;
-      }
-      if (drag.kind === "rotate") {
-        const { yawLocked, pitchLocked } = latestRef.current;
-        const mg = modelGroupRef.current!;
-        const yaw = yawLocked
-          ? drag.yaw0
-          : drag.yaw0 + (e.clientX - drag.x0) * 0.4;
-        const pitch = pitchLocked
-          ? drag.pitch0
-          : drag.pitch0 + (e.clientY - drag.y0) * 0.3;
-        mg.rotation.y = THREE.MathUtils.degToRad(pitch);
-        mg.rotation.z = -THREE.MathUtils.degToRad(yaw);
+        el.style.cursor = pickDisk(e) ? "grab" : overModel(e) ? "pointer" : "";
         return;
       }
       toNdc(e);
@@ -317,36 +434,37 @@ export function NewRunView({ onCreated }: Props) {
     };
 
     const onUp = (e: PointerEvent) => {
-      if (!drag) return;
-      const mg = modelGroupRef.current;
+      if (!drag) {
+        // Click without meaningful movement: select the model, or deselect by
+        // clicking empty space.
+        if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) < 5) {
+          setSelected(press.onModel);
+        }
+        press = null;
+        return;
+      }
       viewer.controls.enabled = true;
       try { el.releasePointerCapture(e.pointerId); } catch { /* synthetic */ }
-      if (drag.kind === "rotate" && mg) {
-        const { yawLocked, pitchLocked } = latestRef.current;
-        const round = (v: number) => Math.round(v * 2) / 2;
-        if (!yawLocked) setYawDeg(String(round(-THREE.MathUtils.radToDeg(mg.rotation.z))));
-        if (!pitchLocked) setPitchDeg(String(round(THREE.MathUtils.radToDeg(mg.rotation.y))));
-      } else if (drag.kind === "disk") {
-        const c = stlCenterRef.current;
-        const i = drag.holder.userData.rowIndex as number;
-        const p = drag.holder.position;
-        const fmt = (v: number) => String(Math.round(v * 10) / 10);
-        setPropRows((rows) =>
-          rows.map((row, j) =>
-            j === i
-              ? { ...row, x: fmt(p.x + c.x), y: fmt(p.y + c.y), z: fmt(p.z + c.z) }
-              : row,
-          ),
-        );
-      }
+      const c = stlCenterRef.current;
+      const i = drag.holder.userData.rowIndex as number;
+      const p = drag.holder.position;
+      const fmt = (v: number) => String(Math.round(v * 10) / 10);
+      setPropRows((rows) =>
+        rows.map((row, j) =>
+          j === i
+            ? { ...row, x: fmt(p.x + c.x), y: fmt(p.y + c.y), z: fmt(p.z + c.z) }
+            : row,
+        ),
+      );
       drag = null;
+      press = null;
     };
 
-    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointerdown", onDown, { capture: true });
     el.addEventListener("pointermove", onMove);
     el.addEventListener("pointerup", onUp);
     return () => {
-      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointerdown", onDown, { capture: true });
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("pointerup", onUp);
     };
@@ -428,8 +546,9 @@ export function NewRunView({ onCreated }: Props) {
     const yaw = yawSwept ? 0 : parseFloat(yawDeg);
     // The trim solver owns pitch; the value sent is ignored/overridden.
     const pitch = pitchSwept || trimOn ? 0 : parseFloat(pitchDeg);
-    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) {
-      setSubmitError("Yaw and pitch must be numbers");
+    const roll = parseFloat(rollDeg || "0");
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch) || !Number.isFinite(roll)) {
+      setSubmitError("Roll, pitch and yaw must be numbers");
       return;
     }
     let props: RunConfig["props"];
@@ -472,7 +591,9 @@ export function NewRunView({ onCreated }: Props) {
       ...(props && props.length ? { props } : {}),
       ...(trimCfg ? { trim: trimCfg } : {}),
       ...(refAreaCm2 ? { ref_area_cm2: refAreaCm2 } : {}),
+      ...(roll ? { roll_deg: roll } : {}),
       ...(groundPlane ? { ground_plane: true } : {}),
+      ...(symmetry ? { symmetry: true } : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -505,6 +626,7 @@ export function NewRunView({ onCreated }: Props) {
                   setFile(null);
                   setTriangles(null);
                   setDims(null);
+                  setSelected(false);
                   geometryRef.current = null;
                 }}
               >
@@ -517,29 +639,71 @@ export function NewRunView({ onCreated }: Props) {
               </div>
             )}
             <div className="viewer-hint">
-              {tool === "rotate"
-                ? "drag to set yaw (\u2194) and pitch (\u2195) \u00b7 wind stays along +X"
+              {selected
+                ? "rotate with the axis controls \u00b7 click empty space to deselect"
                 : propsEnabled
-                  ? "drag disks to move \u00b7 \u21e7 drag = height \u00b7 wind flows along +X"
-                  : "wind flows along +X (blue arrows)"}
+                  ? "click the model to rotate it \u00b7 drag disks to move (\u21e7 = height) \u00b7 wind flows along +X"
+                  : "click the model to rotate it \u00b7 drag to orbit \u00b7 wind flows along +X"}
             </div>
-            <div className="viewer-tools segmented">
-              {(
-                [
-                  ["orbit", "\u27f2 orbit"],
-                  ["rotate", "\u2921 attitude"],
-                ] as ["orbit" | "rotate", string][]
-              ).map(([t, label]) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`seg${tool === t ? " seg-active" : ""}`}
-                  onClick={() => setTool(t)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            {selected && (
+              <div className="rotate-panel">
+                <div className="rotate-panel-head">
+                  <span>Rotate</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    disabled={axisRows.every((a) => a.locked)}
+                    onClick={() => {
+                      for (const a of axisRows) if (!a.locked) a.set("0");
+                    }}
+                  >
+                    reset
+                  </button>
+                </div>
+                {axisRows.map((a) => (
+                  <div className="rotate-axis" key={a.axis}>
+                    <span className={`axis-tag axis-${a.axis.toLowerCase()}`}>
+                      {a.axis}
+                    </span>
+                    <span className="axis-name">{a.name}</span>
+                    {a.locked ? (
+                      <span className="config-note axis-locked">{a.lockNote}</span>
+                    ) : (
+                      <>
+                        {[-90, -15].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            className="chip"
+                            onClick={() => a.nudge(d)}
+                          >
+                            {d}&deg;
+                          </button>
+                        ))}
+                        <input
+                          type="number"
+                          className="mono axis-input"
+                          step="any"
+                          value={a.value}
+                          onChange={(e) => a.set(e.target.value)}
+                          aria-label={`${a.name} degrees`}
+                        />
+                        {[15, 90].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            className="chip"
+                            onClick={() => a.nudge(d)}
+                          >
+                            +{d}&deg;
+                          </button>
+                        ))}
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         ) : (
           <div
@@ -718,6 +882,19 @@ export function NewRunView({ onCreated }: Props) {
                 </>
               )}
             </label>
+            <label className="field">
+              <span className="field-label">Roll (deg)</span>
+              <input
+                type="number"
+                value={rollDeg}
+                onChange={(e) => setRollDeg(e.target.value)}
+                min={-180}
+                max={180}
+                step="any"
+                disabled={!file}
+                title="roll about the model's X axis, applied before pitch and yaw"
+              />
+            </label>
           </div>
           <label className="check-field">
             <input
@@ -742,7 +919,12 @@ export function NewRunView({ onCreated }: Props) {
             <input
               type="checkbox"
               checked={propsEnabled}
-              onChange={(e) => setPropsEnabled(e.target.checked)}
+              onChange={(e) => {
+                setPropsEnabled(e.target.checked);
+                // Seed a four-rotor layout on the frame the first time, so the
+                // disks appear where rotors are instead of inside the model.
+                if (e.target.checked) setPropRows(seedPropRows(4));
+              }}
               disabled={!file}
             />
             <span>Propeller disks — powered flow</span>
@@ -794,7 +976,9 @@ export function NewRunView({ onCreated }: Props) {
                   onClick={() =>
                     setPropRows((rows) => [
                       ...rows,
-                      { x: "0", y: "0", z: "0", d: "127", t: "300" },
+                      // Next free slot of a layout one rotor wider, so the new
+                      // disk never lands on top of an existing one.
+                      seedPropRows(rows.length + 1)[rows.length],
                     ])
                   }
                 >
@@ -859,6 +1043,22 @@ export function NewRunView({ onCreated }: Props) {
               disabled={!file}
             />
             <span>Ground plane (rolling road) — for cars &amp; vehicles</span>
+          </label>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={symmetry}
+              onChange={(e) => setSymmetry(e.target.checked)}
+              disabled={!file || !symmetryAllowed}
+            />
+            <span>
+              Half-model symmetry (≈2× faster) — symmetric models, 0° yaw only
+            </span>
+            {file && !symmetryAllowed && (
+              <span className="config-note">
+                disabled: needs 0° yaw, no props/trim
+              </span>
+            )}
           </label>
           <label className="field">
             <span className="field-label">Mesh quality</span>

@@ -674,6 +674,18 @@ body {
   padding: 8px;
 }
 
+/* Cd that never settled: show it, but never styled as a trustworthy figure. */
+.hero-stat-untrusted .hero-value {
+  color: var(--warn, #e0a33a);
+  opacity: 0.75;
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.hero-stat-untrusted .hero-label {
+  color: var(--warn, #e0a33a);
+}
+
 .hero-label {
   font-size: 11.5px;
   letter-spacing: 0.08em;
@@ -1587,6 +1599,96 @@ body {
 .viewer-tools .seg {
   background: rgba(11, 12, 14, 0.75);
   backdrop-filter: blur(3px);
+}
+
+/* --- slicer-style rotate panel (shown while the model is selected) ------- */
+
+.rotate-panel {
+  /* Bottom-right: keeps clear of the filename/replace overlay at the top and
+     the drag hint at bottom-left. */
+  position: absolute;
+  bottom: 30px;
+  right: 14px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: rgba(11, 12, 14, 0.86);
+  backdrop-filter: blur(4px);
+}
+
+.rotate-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.rotate-axis {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.axis-tag {
+  font-family: var(--mono, ui-monospace, Menlo, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+}
+
+/* Axis colours follow the viewport's AxesHelper: X red, Y green, Z blue. */
+.axis-x {
+  color: #e2635e;
+}
+
+.axis-y {
+  color: #4bb377;
+}
+
+.axis-z {
+  color: #5b9df0;
+}
+
+.axis-name {
+  font-size: 11px;
+  color: var(--muted);
+  width: 34px;
+}
+
+.axis-input {
+  width: 62px;
+  text-align: right;
+  padding: 3px 5px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.axis-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.axis-locked {
+  font-size: 10.5px;
+  font-style: italic;
+}
+
+.rotate-axis .chip {
+  padding: 2px 5px;
+  font-size: 10.5px;
 }
 
 /* --- results / sweep export + storage footer ---------------------------- */

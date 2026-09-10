@@ -74,6 +74,36 @@ functions
         CofR            (${cx} ${cy} ${cz});
     }
 
+    // Peak velocity, watched by the runner. A broken surface (overlapping
+    // shells, sub-mm gaps) can leave a near-sealed cavity whose pressure
+    // solution drives a physically impossible jet through one bad face -
+    // seen at 900x freestream - which poisons the force integrals long
+    // before anything else in the log looks wrong.
+    maxU
+    {
+        type            fieldMinMax;
+        libs            (fieldFunctionObjects);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             no;
+        mode            magnitude;
+        fields          (U);
+    }
+
+    // Peak k, for observability and the powered-fine regression. Kept as its
+    // own function object so each .dat holds exactly one field and stays
+    // trivially parsable.
+    maxK
+    {
+        type            fieldMinMax;
+        libs            (fieldFunctionObjects);
+        writeControl    timeStep;
+        writeInterval   1;
+        log             no;
+        mode            magnitude;
+        fields          (k);
+    }
+
     solverInfo1
     {
         type            solverInfo;
@@ -116,7 +146,7 @@ functions
                 planeType   pointAndNormal;
                 pointAndNormalDict
                 {
-                    point   (0 0 0);
+                    point   (0 ${sliceY} 0);
                     normal  (0 1 0);
                 }
                 interpolate true;

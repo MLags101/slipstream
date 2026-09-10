@@ -10,11 +10,11 @@ UNIT_SCALE = {"mm": 0.001, "cm": 0.01, "m": 1.0, "in": 0.0254}
 
 
 def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
-                pitch_deg: float = 0.0) -> dict:
+                pitch_deg: float = 0.0, roll_deg: float = 0.0) -> dict:
     """Load an STL, scale to meters, center bbox at origin, rotate the model
-    (pitch about Y, then -yaw about Z; wind stays along +X), save a binary STL
-    at out_path. Positive pitch = nose-down (forward-flight tilt).
-    Returns model metadata (SI units)."""
+    (roll about X, then pitch about Y, then -yaw about Z; wind stays along +X),
+    save a binary STL at out_path. Positive pitch = nose-down (forward-flight
+    tilt). Returns model metadata (SI units)."""
     scale = UNIT_SCALE[unit]
     mesh = trimesh.load(stl_path, file_type="stl", force="mesh")
     if mesh.is_empty or len(mesh.faces) == 0:
@@ -31,6 +31,11 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
     c2 = [0.0, 0.0, 0.0]
     mesh.apply_translation(-center)
 
+    if roll_deg:
+        rot = trimesh.transformations.rotation_matrix(
+            math.radians(roll_deg), [1, 0, 0], [0, 0, 0]
+        )
+        mesh.apply_transform(rot)
     if pitch_deg:
         rot = trimesh.transformations.rotation_matrix(
             math.radians(pitch_deg), [0, 1, 0], [0, 0, 0]
@@ -41,7 +46,7 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
             math.radians(-yaw_deg), [0, 0, 1], [0, 0, 0]
         )
         mesh.apply_transform(rot)
-    if pitch_deg or yaw_deg:
+    if roll_deg or pitch_deg or yaw_deg:
         # Re-center after rotation (bbox changes).
         center = mesh.bounds.mean(axis=0)
         c2 = [float(v) for v in center]
@@ -52,19 +57,52 @@ def prepare_stl(stl_path: str, unit: str, yaw_deg: float, out_path: str,
     bbox = mesh.bounds  # (2, 3)
     frontal_area = frontal_area_yz(mesh.triangles, resolution=512)
 
+    sym_error = symmetry_error_y(mesh)
+
     return {
         "bbox_m": [list(map(float, bbox[0])), list(map(float, bbox[1]))],
         "frontal_area_m2": float(frontal_area),
         "triangles": int(len(mesh.faces)),
         "centroid": [float(c) for c in mesh.bounds.mean(axis=0)],
         "watertight": watertight,
+        "symmetry_error": sym_error,
+        "symmetric": bool(sym_error < 0.02),
         "_c1": c1,
         "_c2": c2,
     }
 
 
+def symmetry_error_y(mesh) -> float:
+    """Mirror-symmetry error about the X-Z plane (Y=0), normalized by the
+    model's Y-extent W. Uses the mesh *vertices*: a body that is mirror-
+    symmetric about its centerline has vertices in exact ±Y pairs, so each
+    Y-mirrored vertex sits right on top of an original one (distance ~0). We
+    report the 90th-percentile nearest-neighbour distance / W, so a missing or
+    shifted side (whose mirror lands in empty space) scores high. numpy-only,
+    no rtree/scipy. inf for a degenerate (zero-width) model."""
+    lo, hi = mesh.bounds
+    W = float(hi[1] - lo[1])
+    if W <= 0:
+        return float("inf")
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    if len(V) == 0:
+        return float("inf")
+    # Reference set (cap huge meshes; density stays high enough for ~0 on a
+    # symmetric body). Query = a Y-mirrored subsample.
+    ref = V if len(V) <= 20000 else V[np.random.default_rng(0).choice(len(V), 20000, replace=False)]
+    q = V if len(V) <= 3000 else V[np.random.default_rng(1).choice(len(V), 3000, replace=False)]
+    q = q * np.array([1.0, -1.0, 1.0])
+    dmin = np.empty(len(q))
+    for i in range(0, len(q), 256):
+        chunk = q[i:i + 256]
+        d2 = ((chunk[:, None, :] - ref[None, :, :]) ** 2).sum(axis=2)
+        dmin[i:i + len(chunk)] = np.sqrt(d2.min(axis=1))
+    return float(np.percentile(dmin, 90) / W)
+
+
 def transform_props(props: list[dict], unit: str, yaw_deg: float,
-                    pitch_deg: float, model: dict) -> list[dict]:
+                    pitch_deg: float, model: dict,
+                    roll_deg: float = 0.0) -> list[dict]:
     """Map propeller disk specs given in original STL coordinates into the
     prepared model frame (meters, centered, pitched, yawed) — the same
     transform prepare_stl applies to the mesh. Each prop: {"center": [x,y,z]
@@ -81,11 +119,14 @@ def transform_props(props: list[dict], unit: str, yaw_deg: float,
     scale = UNIT_SCALE[unit]
     c1 = np.asarray(model["_c1"])
     c2 = np.asarray(model["_c2"])
+    rr = trimesh.transformations.rotation_matrix(
+        math.radians(roll_deg), [1, 0, 0])[:3, :3]
     rp = trimesh.transformations.rotation_matrix(
         math.radians(pitch_deg), [0, 1, 0])[:3, :3]
     ry = trimesh.transformations.rotation_matrix(
         math.radians(-yaw_deg), [0, 0, 1])[:3, :3]
-    rot = ry @ rp
+    # Same order prepare_stl applies to the mesh: roll, then pitch, then yaw.
+    rot = ry @ rp @ rr
     out = []
     for p in props:
         c = rot @ (np.asarray(p["center"], dtype=float) * scale - c1) - c2

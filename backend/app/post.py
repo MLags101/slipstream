@@ -1,6 +1,7 @@
 """Post-processing: OpenFOAM .dat parsing, result computation, viz JSON building."""
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 
@@ -81,6 +82,55 @@ def read_history(case_dir: str | Path) -> dict:
     return out
 
 
+def _read_minmax_peak(case_dir: str | Path, fo_name: str,
+                      field: str) -> float | None:
+    """Largest value the named fieldMinMax function object has recorded.
+
+    None when the file is missing or unreadable (older cases, or the very first
+    iterations before it is written) — callers must treat that as "unknown"
+    rather than as zero, or a guard built on it would never fire.
+    """
+    dat = _latest_dat(Path(case_dir), fo_name, "fieldMinMax.dat")
+    try:
+        text = dat.read_text(errors="replace")
+    except OSError:
+        return None
+    # fieldMinMax is NOT parse_dat-shaped: rows carry a string field name and
+    # parenthesised location vectors, e.g.
+    #   1  mag(U)  0  (x y z)  0  2.32e+01  (x y z)  4
+    # Dropping every (...) group leaves [time, mag, min, proc, max, proc].
+    vals: list[float] = []
+    for line in text.splitlines():
+        if not line or line.lstrip().startswith("#"):
+            continue
+        parts = re.sub(r"\([^)]*\)", " ", line).split()
+        if len(parts) < 5:
+            continue
+        try:
+            v = float(parts[4])
+        except ValueError:
+            continue
+        if math.isfinite(v):
+            vals.append(v)
+    if not vals:
+        return None
+    # The last samples only. An impulsive start legitimately throws up huge
+    # transient speeds (measured: 501 m/s at iteration 2 of a healthy 15 m/s
+    # run, settling to 21), so an all-time peak would latch that forever and
+    # condemn a run that went on to converge perfectly.
+    return max(vals[-PEAK_WINDOW:])
+
+
+def read_max_speed(case_dir: str | Path) -> float | None:
+    """Peak |U| in the domain so far (m/s)."""
+    return _read_minmax_peak(case_dir, "maxU", "U")
+
+
+def read_max_k(case_dir: str | Path) -> float | None:
+    """Peak turbulent kinetic energy so far (m2/s2)."""
+    return _read_minmax_peak(case_dir, "maxK", "k")
+
+
 def _latest_dat(case_dir: Path, fo_name: str, fname: str) -> Path:
     """Function objects write under postProcessing/<fo>/<startTime>/<fname>."""
     base = case_dir / "postProcessing" / fo_name
@@ -131,6 +181,16 @@ def parse_mesh_quality(check_log: str | Path) -> dict:
     return out
 
 
+# Cd is called converged when the scatter over the averaged window is within
+# this fraction of |Cd|. 5% is loose enough that an honestly-converged coarse
+# run passes, tight enough that the +/-260 swing of a leaking cavity does not.
+CONVERGED_REL_TOL = 0.05
+
+# Peak probes report over this many trailing samples, so the startup
+# transient cannot condemn a run that later converges.
+PEAK_WINDOW = 25
+
+
 def compute_result(case_dir: str | Path, config: dict, model: dict,
                    mesh_cells: int | None, runtime_s: float,
                    stopped_early: bool = False) -> dict:
@@ -155,6 +215,23 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     ref_area = float(ref_cm2) / 1e4 if ref_cm2 else frontal
     qdyn = 0.5 * rho * u * u * ref_area
     drag_pressure, drag_viscous = drag_breakdown(case_dir)
+
+    # Half-model (symmetry) solve: the forceCoeffs/forces cover only the +Y
+    # half, so double the streamwise/vertical loads to recover the full model.
+    # The reference area stays the FULL frontal area, so doubling the half
+    # force against the full area yields the correct full Cd/Cl. Side force is
+    # zero by symmetry.
+    symmetry = bool(config.get("symmetry"))
+    if symmetry:
+        cd *= 2.0
+        cl *= 2.0
+        cs = 0.0
+        if drag_pressure is not None:
+            drag_pressure *= 2.0
+        if drag_viscous is not None:
+            drag_viscous *= 2.0
+    # Scatter of the averaged window, on the same (doubled) scale as cd.
+    cd_std = float(np.std(coeffs["Cd"][win])) * (2.0 if symmetry else 1.0)
     # Reynolds number on the model's streamwise length (the lRef used for
     # coefficients), so users can sanity-check the flow regime.
     (bx0, _, _), (bx1, _, _) = model["bbox_m"]
@@ -170,10 +247,15 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
         "iterations": int(coeffs["Time"][-1]),
         "mesh_cells": mesh_cells,
         "runtime_s": round(runtime_s, 1),
-        "cd_std_last20pct": float(np.std(coeffs["Cd"][win])),
+        "cd_std_last20pct": cd_std,
+        # Did Cd actually settle? Averaging a coefficient that is still swinging
+        # produces a confident-looking number that means nothing, so say so
+        # instead of leaving it for the reader to infer from cd_std.
+        "converged": bool(cd_std <= CONVERGED_REL_TOL * abs(cd)) if cd else False,
         "reynolds": reynolds,
         "mesh_quality": parse_mesh_quality(Path(case_dir) / "log.checkMesh"),
         "stopped_early": bool(stopped_early),
+        "symmetry": symmetry,
     }
 
 
@@ -360,7 +442,25 @@ def _rng(a: np.ndarray) -> list[float]:
     return [float(a.min()), float(a.max())] if a.size else [0.0, 0.0]
 
 
-def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float) -> dict:
+def _mirror_y(points: np.ndarray, tris: np.ndarray,
+              scalar_fields: list[np.ndarray]
+              ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    """A half-model (symmetry) solve only stores the +Y half. Append a copy
+    reflected across Y=0 so the UI shows the whole thing: positions y -> -y;
+    triangles duplicated with REVERSED winding (swap two indices, so mirrored
+    normals still point outward) and indices offset by the original vertex
+    count; each per-vertex scalar field duplicated for the mirror copy."""
+    n = len(points)
+    mpts = points.copy()
+    mpts[:, 1] = -mpts[:, 1]
+    points2 = np.vstack([points, mpts])
+    tris2 = np.vstack([tris, tris[:, [0, 2, 1]] + n]) if len(tris) else tris
+    fields2 = [np.concatenate([f, f]) for f in scalar_fields]
+    return points2, tris2, fields2
+
+
+def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float,
+                      symmetry: bool = False) -> dict:
     """Model surface with pressure (Pa) and Cp, flat arrays for three.js."""
     path = _find_sampled(Path(case_dir), "modelSurface")
     if path is None:
@@ -372,6 +472,8 @@ def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float) -> dict:
     p_pa = p_kin * rho
     qdyn = 0.5 * rho * u_inf * u_inf
     cp = p_pa / qdyn if qdyn > 0 else np.zeros_like(p_pa)
+    if symmetry:
+        points, tris, (p_pa, cp) = _mirror_y(points, tris, [p_pa, cp])
     return {
         "positions": [round(float(x), 6) for x in points.ravel()],
         "indices": [int(i) for i in tris.ravel()],
@@ -380,13 +482,18 @@ def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float) -> dict:
     }
 
 
-def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float) -> dict:
-    """Flat-array JSON for a sampled plane carrying U and p."""
+def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float,
+                  symmetry: bool = False) -> dict:
+    """Flat-array JSON for a sampled plane carrying U and p. With `symmetry`
+    the saved plane only covers +Y, so a Y-mirrored copy is appended (u_mag is
+    a magnitude, so it duplicates unchanged)."""
     if "U" not in fields or "p" not in fields:
         raise RuntimeError("fields U/p missing on sampled plane")
     u = _clean(fields["U"]).reshape(len(points), -1)
     u_mag = np.linalg.norm(u, axis=1)
     p_pa = _clean(fields["p"]).reshape(-1) * rho
+    if symmetry:
+        points, tris, (u_mag, p_pa) = _mirror_y(points, tris, [u_mag, p_pa])
     return {
         "positions": [round(float(x), 6) for x in points.ravel()],
         "indices": [int(i) for i in tris.ravel()],
@@ -395,14 +502,15 @@ def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float
     }
 
 
-def build_slice_viz(case_dir: str | Path, axis: str, rho: float) -> dict:
+def build_slice_viz(case_dir: str | Path, axis: str, rho: float,
+                    symmetry: bool = False) -> dict:
     """Center cutting plane (y or z normal) with u_mag (m/s) and p (Pa)."""
     name = "sliceY" if axis == "y" else "sliceZ"
     path = _find_sampled(Path(case_dir), name)
     if path is None:
         raise RuntimeError(f"sampled {name} not found under postProcessing/surfaces1")
     points, tris, fields = _load_tri_mesh(path)
-    return plane_payload(points, tris, fields, rho)
+    return plane_payload(points, tris, fields, rho, symmetry=symmetry)
 
 
 def load_legacy_polylines(path: Path) -> tuple[np.ndarray, list[list[int]], dict]:

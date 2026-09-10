@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+import re
 import shutil
 from pathlib import Path
 from string import Template
@@ -17,20 +18,27 @@ QUALITY = {
 NPROCS = 6
 
 
-def domain_bounds(model: dict, ground: bool = False) -> list[list[float]]:
+def domain_bounds(model: dict, ground: bool = False,
+                  symmetry: bool = False) -> list[list[float]]:
     """Wind tunnel domain bbox: x in [xmin-4L, xmax+9L], y/z half-extent
     3W / 3H, widened until frontal blockage < 5%. With `ground`, the floor is
-    placed just below the model (a road) instead of far below."""
+    placed just below the model (a road) instead of far below. With
+    `symmetry`, only the +Y half is kept (y in [0, +hy]) so a mirror-symmetric
+    model can be solved on half the cells."""
     (bx0, by0, bz0), (bx1, by1, bz1) = model["bbox_m"]
     L, W, H = bx1 - bx0, by1 - by0, bz1 - bz0
     dx0, dx1 = bx0 - 4.0 * L, bx1 + 9.0 * L
     hy, hz = 3.0 * W, 3.0 * H
     floor = (bz0 - 0.12 * H) if ground else -hz
     area = model["frontal_area_m2"]
+    # Blockage uses the full width 2*hy vs the full frontal area; halving both
+    # the domain width and the modelled area (symmetry) leaves the ratio the
+    # same, so this check stays valid for the half domain too.
     while area / ((2 * hy) * (hz - floor)) > 0.05:
         hy *= 1.25
         hz *= 1.25
-    return [[dx0, -hy, floor], [dx1, hy, hz]]
+    dy0 = 0.0 if symmetry else -hy
+    return [[dx0, dy0, floor], [dx1, hy, hz]]
 
 
 def compute_params(model: dict, config: dict) -> dict:
@@ -49,7 +57,9 @@ def compute_params(model: dict, config: dict) -> dict:
     q = QUALITY[config["quality"]]
 
     ground = bool(config.get("ground_plane"))
-    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(model, ground=ground)
+    symmetry = bool(config.get("symmetry"))
+    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(
+        model, ground=ground, symmetry=symmetry)
 
     domain_len = dx1 - dx0
     cell = domain_len / 70.0
@@ -67,6 +77,8 @@ def compute_params(model: dict, config: dict) -> dict:
     rbz0, rbz1 = bz0 - 0.5 * L, bz1 + 0.5 * L
 
     # Point near inlet corner, guaranteed outside the model & refinement box.
+    # With symmetry, dy0 == 0, so liy = 0.677*cell is a positive point just
+    # inside the +Y half domain (far upstream, open fluid — not on the model).
     lix = dx0 + 0.731 * cell
     liy = dy0 + 0.677 * cell
     liz = dz0 + 0.613 * cell
@@ -99,6 +111,9 @@ def compute_params(model: dict, config: dict) -> dict:
         "rby0": fmt(rby0), "rby1": fmt(rby1),
         "rbz0": fmt(rbz0), "rbz1": fmt(rbz1),
         "lix": fmt(lix), "liy": fmt(liy), "liz": fmt(liz),
+        # Center flow-slice sample plane: y=0 normally; with symmetry the
+        # domain starts AT y=0, so sample just inside the half domain.
+        "sliceY": fmt(0.55 * cell if symmetry else 0.0),
         "surfMin": str(q["surf_min"]), "surfMax": str(q["surf_max"]),
         "featLevel": str(q["surf_min"]),
         "maxGlobalCells": str(q["max_global_cells"]),
@@ -255,6 +270,40 @@ def _dir_bytes(path: Path) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Boundary-patch surgery: carve a face out of the blockMesh `walls` patch
+# ---------------------------------------------------------------------------
+
+_WALLS_RE = re.compile(
+    r"    walls\n    \{\n        type patch;\n        faces\n        \(\n"
+    r"(?P<faces>.*?)\n        \);\n    \}",
+    re.DOTALL)
+
+
+def _split_wall_face(text: str, face: str, patch_name: str,
+                     patch_type: str) -> str:
+    """Move a single `face` out of the blockMeshDict `walls` patch into a new
+    `patch_name` patch of `patch_type`, inserted just before `walls`. Parses
+    the current walls faces rather than assuming the original 4-face form, so
+    ground + symmetry compose regardless of order (each removes its own face
+    from whatever walls block currently exists)."""
+    m = _WALLS_RE.search(text)
+    if m is None:
+        raise RuntimeError("blockMeshDict walls patch not in expected form")
+    faces = [ln.strip() for ln in m.group("faces").splitlines() if ln.strip()]
+    if face not in faces:
+        raise RuntimeError(f"blockMeshDict walls patch missing face {face}")
+    remaining = [f for f in faces if f != face]
+    new_patch = (
+        f"    {patch_name}\n    {{\n        type {patch_type};\n"
+        f"        faces\n        (\n            {face}\n        );\n    }}\n")
+    walls_block = (
+        "    walls\n    {\n        type patch;\n        faces\n        (\n"
+        + "".join(f"            {f}\n" for f in remaining)
+        + "        );\n    }")
+    return text[:m.start()] + new_patch + walls_block + text[m.end():]
+
+
+# ---------------------------------------------------------------------------
 # Ground plane (rolling road) for vehicles
 # ---------------------------------------------------------------------------
 
@@ -285,20 +334,7 @@ def add_ground_plane(case_dir: str | Path, params: dict, moving: bool = True) ->
 
     # 1. blockMeshDict: split the bottom face (0 3 2 1) out of `walls`.
     bm = case / "system" / "blockMeshDict"
-    text = bm.read_text()
-    old = (
-        "    walls\n    {\n        type patch;\n        faces\n        (\n"
-        "            (0 3 2 1)\n            (4 5 6 7)\n"
-        "            (0 1 5 4)\n            (3 7 6 2)\n        );\n    }")
-    new = (
-        "    ground\n    {\n        type wall;\n        faces\n        (\n"
-        "            (0 3 2 1)\n        );\n    }\n"
-        "    walls\n    {\n        type patch;\n        faces\n        (\n"
-        "            (4 5 6 7)\n            (0 1 5 4)\n"
-        "            (3 7 6 2)\n        );\n    }")
-    if old not in text:
-        raise RuntimeError("blockMeshDict walls patch not in expected form")
-    bm.write_text(text.replace(old, new))
+    bm.write_text(_split_wall_face(bm.read_text(), "(0 3 2 1)", "ground", "wall"))
 
     # 2. 0/ fields: insert a `ground` entry just before the `model` patch.
     for field, bc in _GROUND_BC.items():
@@ -308,3 +344,34 @@ def add_ground_plane(case_dir: str | Path, params: dict, moving: bool = True) ->
         if marker not in t:
             raise RuntimeError(f"0/{field}: model patch not found")
         f.write_text(t.replace(marker, bc(params, moving) + marker, 1))
+
+
+# ---------------------------------------------------------------------------
+# Symmetry plane (half-model solve) — X-Z plane at Y=0
+# ---------------------------------------------------------------------------
+
+_SYMMETRY_BC = (
+    "    symmetry\n    {\n        type            symmetryPlane;\n    }\n")
+
+
+def add_symmetry_plane(case_dir: str | Path) -> None:
+    """Turn the domain's y-min face into a `symmetry` patch of type
+    symmetryPlane and add its (value-free) boundary entry to the 0/ fields, so
+    only the +Y half of the domain is solved. Composes with add_ground_plane:
+    it carves its own face (0 1 5 4) out of whatever `walls` block currently
+    exists, and symmetryPlane needs no per-field value."""
+    case = Path(case_dir)
+
+    # 1. blockMeshDict: split the y-min face (0 1 5 4) out of `walls`.
+    bm = case / "system" / "blockMeshDict"
+    bm.write_text(_split_wall_face(
+        bm.read_text(), "(0 1 5 4)", "symmetry", "symmetryPlane"))
+
+    # 2. 0/ fields: insert a `symmetry` entry just before the `model` patch.
+    for field in ("U", "p", "k", "omega", "nut"):
+        f = case / "0" / field
+        t = f.read_text()
+        marker = "    model\n    {"
+        if marker not in t:
+            raise RuntimeError(f"0/{field}: model patch not found")
+        f.write_text(t.replace(marker, _SYMMETRY_BC + marker, 1))

@@ -95,7 +95,8 @@ def _cached(cache: Path) -> dict | None:
     return None
 
 
-def slice_json(run_dir: Path, axis: str, pos: float, rho: float) -> dict:
+def slice_json(run_dir: Path, axis: str, pos: float, rho: float,
+               symmetry: bool = False) -> dict:
     key = f"{pos:.6g}".replace("-", "m").replace(".", "p")
     cache = run_dir / f"viz_slice_{axis}_{key}.json"
     if (payload := _cached(cache)) is not None:
@@ -118,7 +119,8 @@ def slice_json(run_dir: Path, axis: str, pos: float, rho: float) -> dict:
                 f"see case/log.postProcess.onDemandSlice")
         try:
             points, tris, fields = post._load_tri_mesh(vtk)
-            payload = post.plane_payload(points, tris, fields, rho)
+            payload = post.plane_payload(points, tris, fields, rho,
+                                         symmetry=symmetry)
         finally:
             # postProcessing/onDemandSlice would otherwise serve stale data
             # for the next position; the JSON cache is the durable copy.
@@ -134,7 +136,8 @@ STREAM_REGION = {"full": 1.15, "core": 0.6}          # span factor vs model bbox
 
 
 def streamlines_json(run_dir: Path, model: dict, rho: float,
-                     density: str = "med", region: str = "full") -> dict:
+                     density: str = "med", region: str = "full",
+                     symmetry: bool = False) -> dict:
     cache = run_dir / f"viz_streamlines_{density}_{region}.json"
     if (payload := _cached(cache)) is not None:
         return payload
@@ -153,7 +156,10 @@ def streamlines_json(run_dir: Path, model: dict, rho: float,
         # Small jitter keeps seeds off exact cell faces (y=0/z=0 planes),
         # where OpenFOAM's particle tracking stalls immediately.
         x = bx0 - 0.7 * L + 1.3e-4
-        ys = np.linspace(by0, by1, n) * span + 1.1e-4
+        # A symmetry run only stored the +Y half of the field, so seed the rake
+        # in y >= 0 (the -Y tracks are produced by mirroring below).
+        y_lo = 0.0 if symmetry else by0
+        ys = np.linspace(y_lo, by1, n) * span + 1.1e-4
         zs = np.linspace(bz0, bz1, n) * span + 1.7e-4
         pts = "\n".join(f"        ({x:.6g} {y:.6g} {z:.6g})"
                         for y in ys for z in zs)
@@ -175,6 +181,16 @@ def streamlines_json(run_dir: Path, model: dict, rho: float,
         u_mag = np.linalg.norm(np.asarray(fields["U"]).reshape(len(points), -1),
                                axis=1)
         u_mag = np.nan_to_num(u_mag, nan=0.0, posinf=0.0, neginf=0.0)
+        if symmetry:
+            # Mirror the +Y tracks across Y=0 to fill the -Y half: reflected
+            # point set appended, each track's index-list duplicated with the
+            # original point count as offset, u_mag duplicated unchanged.
+            n_pts = len(points)
+            mpts = points.copy()
+            mpts[:, 1] = -mpts[:, 1]
+            points = np.vstack([points, mpts])
+            tracks = list(tracks) + [[i + n_pts for i in t] for t in tracks]
+            u_mag = np.concatenate([u_mag, u_mag])
         payload = {
             "positions": [round(float(v), 6) for v in points.ravel()],
             "lines": [[int(i) for i in t] for t in tracks],

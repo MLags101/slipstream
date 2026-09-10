@@ -247,3 +247,67 @@ controlDict is `runTimeModifiable`; the runner flips `stopAt` → `writeNow`).
   Validated: sample car @ 30 m/s free-air lift −0.03 N vs ground −0.17 N (ground effect).
 - Frontend: "Ground plane (rolling road)" checkbox; the setup preview draws the road slab +
   rolling-road grid at the model underside.
+
+## v7 additions (roll axis, slicer-style attitude editing)
+
+- Config gains `roll_deg` (default 0, validated to [-180, 180]): rotation about **X**,
+  applied **before** pitch and yaw. Full model transform is now
+  `R = Rz(-yaw) · Ry(pitch) · Rx(roll)`, applied to the mesh in `prepare_stl` and replayed
+  on disk centres and thrust axes in `transform_props` — the two MUST stay in the same
+  order or prop disks drift off the rotors (`tests/test_geometry_rotation.py` pins this
+  against a deliberately asymmetric body).
+- `symmetry` now additionally requires `roll_deg == 0`: roll tips the model out of the
+  Y=0 mirror plane, so a half-model solve would no longer represent the whole body.
+- Frontend attitude editing is **click-to-select, then explicit per-axis controls** (the
+  3D-printer-slicer model), replacing drag-to-rotate:
+  - Clicking the model selects it (cyan `Box3Helper` outline that tilts with the model);
+    clicking empty space deselects. A press only counts as a click if the pointer moved
+    < 5 px, so camera orbiting is unaffected.
+  - While selected, a "Rotate" panel exposes one row per axis — X roll / Y pitch / Z yaw,
+    coloured to match the viewport's AxesHelper — each with ±15°/±90° nudges and a number
+    input, plus reset. Axes owned by a sweep or the trim solver render as locked with the
+    reason instead of inputs.
+  - Nudges MUST use functional `setState` updaters: reading the angle from the render
+    closure makes two quick clicks both apply to the same stale value.
+  - Dragging prop disks on their rotor plane (Shift = height) is unchanged.
+- New prop disks are seeded on the rotors instead of stacked at the model origin:
+  `defaultPropPlacements` (frontend `lib/geometry.ts`) puts `n` rotors on the perimeter of
+  the bounding rectangle shrunk to 85% of its half-extents at evenly spaced angles, offset
+  half a step so the four-rotor case lands on the corners; diameter is 0.8× the closest
+  neighbour spacing. Each disk's z is then raycast down onto the model surface below it,
+  so it sits on the motor rather than on the bounding-box lid (a tall battery or camera in
+  the middle would otherwise dominate). Ticking "Propeller disks" seeds four rotors.
+
+## v7.1 additions (physical-plausibility guards)
+
+Motivated by a real failure: an assembly-export STL (overlapping, non-watertight
+shells) meshed at `fine` with propeller disks produced peak |U| of **2.3e4 m/s against
+a 25 m/s freestream** — 900x — in 0.14% of cells forming a thin slab in the centre
+stack, with Cd swinging +/-260 for the entire solve while Ux/p residuals sat at
+~1e-4. Diagnosis: a near-sealed interior cavity, where the pressure solution meets
+mass conservation by driving an absurd jet through one bad face. The k runaway
+(max 5.9e6) is a *late* symptom, first appearing only at iteration 83 — the force
+integral is already garbage by iteration 41.
+
+Confirmed **not** an actuator-disk problem: the hot cells sit 104-124 mm from every
+disk axis (disk radius 64 mm), and the same fine + powered setup on a watertight
+sample frame converges to Cd 0.95 with zero bounding-k events. An
+`limitTurbulenceViscosity` cap on nut was tested on the failing mesh and does **not**
+recover the solution, so it is deliberately not applied.
+
+Neither old guard caught this: the divergence trip only fires above `|Cd| > 1e4`, and
+`cd_std_last20pct` was reported but never acted on.
+
+- New `maxU` function object (`fieldMinMax`, magnitude mode, every timestep) in the
+  controlDict template; `post.read_max_speed(case)` returns the peak |U| so far, or
+  `None` when unknown — callers MUST NOT treat that as 0, or the guard never fires.
+- `Runner.MAX_SPEED_FACTOR = 10.0`: the solve is killed when peak |U| exceeds
+  10x freestream, with an error naming the likely cause (sealed/leaking cavity from
+  an assembly exported as overlapping shells) and the remedy (repair to a single
+  watertight solid, or delete interior parts). Nothing in external aerodynamics
+  legitimately exceeds a few times freestream, so this cannot fire on a healthy run.
+- Result gains `"converged": bool` — `cd_std_last20pct <= 0.05 * |cd|`
+  (`post.CONVERGED_REL_TOL`), false when `cd` is 0. Averaging a coefficient that never
+  settled yields a confident-looking meaningless number; frontends MUST NOT present
+  `cd` as a result when `converged` is false. `cd_std_last20pct` is now doubled for
+  half-model symmetry runs, matching the doubled `cd` it is compared against.

@@ -48,6 +48,60 @@ export function toMeshArrays(positions: number[], indices: number[]): MeshArrays
   };
 }
 
+export interface PropPlacement {
+  x: number;
+  y: number;
+  z: number;
+  /** Rotor diameter, sized so neighbouring disks do not overlap. */
+  d: number;
+}
+
+/**
+ * Starting positions for `count` rotor disks on a multirotor, in the STL's own
+ * coordinates. Rotors go on the perimeter of the bounding rectangle shrunk to
+ * 85% of its half-extents, at evenly spaced angles, sitting on the model's top
+ * face — which is where rotors actually are on a frame, and close to the real
+ * motor positions on both test frames (within a few mm on each axis).
+ *
+ * The angles start half a step in so that the common four-rotor case lands
+ * exactly on the four corners rather than on the mid-edges.
+ */
+export function defaultPropPlacements(
+  center: readonly [number, number, number],
+  size: readonly [number, number, number],
+  count: number,
+): PropPlacement[] {
+  const n = Math.max(1, Math.floor(count));
+  const ax = (Math.abs(size[0]) / 2) * 0.85;
+  const ay = (Math.abs(size[1]) / 2) * 0.85;
+  const top = center[2] + Math.abs(size[2]) / 2;
+
+  const at = (i: number): [number, number] => {
+    const t = ((2 * Math.PI) / n) * i + Math.PI / n;
+    const c = Math.cos(t);
+    const s = Math.sin(t);
+    // Project onto the rectangle perimeter instead of the inscribed ellipse.
+    const k = Math.max(Math.abs(c), Math.abs(s)) || 1;
+    return [center[0] + (ax * c) / k, center[1] + (ay * s) / k];
+  };
+
+  const pts = Array.from({ length: n }, (_, i) => at(i));
+  // Diameter from the closest neighbour spacing, so disks never start overlapped.
+  let gap = Infinity;
+  for (let i = 0; i < pts.length && pts.length > 1; i++) {
+    const j = (i + 1) % pts.length;
+    gap = Math.min(gap, Math.hypot(pts[i][0] - pts[j][0], pts[i][1] - pts[j][1]));
+  }
+  if (!Number.isFinite(gap) || gap <= 0) gap = Math.max(ax, ay, 1) * 2;
+  const d = round1(gap * 0.8);
+
+  return pts.map(([x, y]) => ({ x: round1(x), y: round1(y), z: round1(top), d }));
+}
+
+function round1(v: number): number {
+  return Math.round(v * 10) / 10;
+}
+
 export interface Bounds {
   min: [number, number, number];
   max: [number, number, number];
