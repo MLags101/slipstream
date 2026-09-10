@@ -109,3 +109,7 @@ architecture and API.
 MIT for everything in this repository. OpenFOAM is a separate GPL-licensed program
 invoked as an external process — it is not bundled; install it from
 [openfoam.app](https://github.com/gerlero/openfoam-app) or openfoam.com.
+
+This offering is not approved or endorsed by OpenCFD Limited, producer and
+distributor of the OpenFOAM software via www.openfoam.com, and owner of the
+OPENFOAM® and OpenCFD® trade marks.
