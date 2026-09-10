@@ -231,6 +231,16 @@ class Runner:
     # integrals while residuals still look healthy. Nothing in external
     # aerodynamics legitimately exceeds a few times freestream.
     MAX_SPEED_FACTOR = 10.0
+    # The peak probe reports over a trailing PEAK_WINDOW, but the impulsive
+    # start spikes far past the limit for the first few iterations (501 m/s at
+    # iteration 2 of a healthy 15 m/s run; 1070 m/s at iteration 2 of a healthy
+    # powered 25 m/s run). Only judge once that window has slid past startup.
+    MAX_SPEED_MIN_ITER = post.PEAK_WINDOW + 5
+
+    @classmethod
+    def _speed_not_physical(cls, umax: float | None, u0: float, it: int) -> bool:
+        return (umax is not None and it >= cls.MAX_SPEED_MIN_ITER
+                and umax > cls.MAX_SPEED_FACTOR * u0)
 
     @classmethod
     def _converged(cls, cd: list[float], it: int, iterations: int) -> bool:
@@ -395,8 +405,7 @@ class Runner:
                 # Physically impossible peak speed: catches a leaking interior
                 # cavity, which corrupts the forces while residuals look fine.
                 umax = post.read_max_speed(case)
-                limit = self.MAX_SPEED_FACTOR * u0
-                if umax is not None and umax > limit:
+                if self._speed_not_physical(umax, u0, it):
                     if self._proc is not None:
                         self._kill_proc(self._proc)
                     raise RuntimeError(
