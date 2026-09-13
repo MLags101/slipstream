@@ -26,6 +26,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: System libraries for pymeshlab
+        if: matrix.deps == 'full'
+        # pymeshlab's filter plugins link against OpenGL; without these the
+        # module imports but every filter is missing.
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libopengl0 libgl1 libglu1-mesa
+
       - name: Install dependencies
         working-directory: backend
         run: |

@@ -125,3 +125,24 @@ def test_voxel_pitch_respects_resolution_and_memory_cap():
     assert (300 / p) ** 3 <= repair.MAX_VOXELS * 1.001
     with pytest.raises(ValueError):
         repair.voxel_pitch([0, 0, 0])
+
+
+def test_broken_pymeshlab_install_falls_back(monkeypatch):
+    """pymeshlab can import but have no filters when its plugins can't load
+    (headless Linux without libOpenGL). Repair must fall back, not crash."""
+    import sys
+    import types
+
+    class _MeshSet:  # imports fine, but the decimation filter is missing
+        def add_mesh(self, _mesh):
+            pass
+
+    broken = types.SimpleNamespace(MeshSet=_MeshSet, Mesh=lambda **_kw: object())
+    monkeypatch.setitem(sys.modules, "pymeshlab", broken)
+
+    box = trimesh.creation.box(extents=(40.0, 20.0, 10.0))
+    for _ in range(4):
+        box = box.subdivide()
+    out, used = repair.decimate(box, 500, prefer_pymeshlab=True)
+    assert used in ("fast_simplification", "none")
+    assert out.is_watertight and repair.edge_stats(out) == (0, 0)

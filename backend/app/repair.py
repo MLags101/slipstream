@@ -131,17 +131,24 @@ def decimate(mesh: trimesh.Trimesh, target: int,
         except ImportError:
             pymeshlab = None
         if pymeshlab is not None:
-            ms = pymeshlab.MeshSet()
-            ms.add_mesh(pymeshlab.Mesh(vertex_matrix=mesh.vertices.astype(np.float64),
-                                       face_matrix=mesh.faces.astype(np.int32)))
-            ms.meshing_decimation_quadric_edge_collapse(
-                targetfacenum=int(target), preservetopology=True,
-                preserveboundary=True, preservenormal=True,
-                optimalplacement=True, planarquadric=True,
-                qualitythr=0.4, autoclean=True)
-            m = ms.current_mesh()
-            out = _oriented(m.vertex_matrix(), m.face_matrix())
-            if _closed(out) and out.body_count <= bodies:
+            # pymeshlab can import yet have no filters: its plugins are shared
+            # libraries that fail to load without system OpenGL (seen on
+            # headless Linux: libOpenGL.so.0 missing -> no decimation filter).
+            # Any failure here must fall through, not fail the whole repair.
+            try:
+                ms = pymeshlab.MeshSet()
+                ms.add_mesh(pymeshlab.Mesh(vertex_matrix=mesh.vertices.astype(np.float64),
+                                           face_matrix=mesh.faces.astype(np.int32)))
+                ms.meshing_decimation_quadric_edge_collapse(
+                    targetfacenum=int(target), preservetopology=True,
+                    preserveboundary=True, preservenormal=True,
+                    optimalplacement=True, planarquadric=True,
+                    qualitythr=0.4, autoclean=True)
+                m = ms.current_mesh()
+                out = _oriented(m.vertex_matrix(), m.face_matrix())
+            except Exception:  # noqa: BLE001 — broken install: use the fallback
+                out = None
+            if out is not None and _closed(out) and out.body_count <= bodies:
                 return out, "pymeshlab"
     import fast_simplification
     v, f = fast_simplification.simplify(
