@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { formatLength, unitHint } from "../lib/unitCheck";
+import { inspectionProblem, repairSummary } from "../lib/repairText";
+import type { RepairJob, StlInspection } from "../api";
 import { api, type Quality, type RunConfig, type StlUnit } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
 import { nameFromFilename, formatInt } from "../lib/format";
@@ -37,6 +39,13 @@ export function NewRunView({ onCreated }: Props) {
   const [triangles, setTriangles] = useState<number | null>(null);
   const [dims, setDims] = useState<[number, number, number] | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
+  // Model health check + repair. `originalFileRef` keeps the pre-repair file
+  // so a repair can be undone; `fileRef` lets async work notice a replaced model.
+  const [inspection, setInspection] = useState<StlInspection | null>(null);
+  const [repairJob, setRepairJob] = useState<RepairJob | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const originalFileRef = useRef<File | null>(null);
+  const fileRef = useRef<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
   // Config form — explicit "configure, then Run". Number inputs, no sliders,
@@ -473,7 +482,7 @@ export function NewRunView({ onCreated }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file !== null]);
 
-  const acceptFile = useCallback(async (f: File) => {
+  const acceptFile = useCallback(async (f: File, repaired = false) => {
     setParseError(null);
     if (!/\.stl$/i.test(f.name)) {
       setParseError(`"${f.name}" is not an .stl file`);
@@ -492,13 +501,79 @@ export function NewRunView({ onCreated }: Props) {
       geometryRef.current = geometry;
       setDims([size.x, size.y, size.z]);
       setTriangles(geometry.getAttribute("position").count / 3);
+      fileRef.current = f;
       setFile(f);
-      setName(nameFromFilename(f.name));
+      if (!repaired) {
+        // A fresh model: new name, and any earlier repair no longer applies.
+        setName(nameFromFilename(f.name));
+        originalFileRef.current = null;
+        setRepairJob(null);
+        setRepairError(null);
+      }
       setSubmitError(null);
+      setInspection(null);
+      api.inspectStl(f).then(
+        (ins) => {
+          if (fileRef.current === f) setInspection(ins);
+        },
+        () => {
+          // Advisory only — the run itself still validates the STL.
+        },
+      );
     } catch (e) {
       setParseError(`Could not parse STL: ${(e as Error).message}`);
     }
   }, []);
+
+  const repairModel = async () => {
+    const source = fileRef.current;
+    if (!source) return;
+    setRepairError(null);
+    try {
+      const { id } = await api.startRepair(source);
+      let job: RepairJob = {
+        id,
+        status: "running",
+        progress: 0,
+        stage: "queued",
+        report: null,
+        error: null,
+      };
+      setRepairJob(job);
+      while (job.status === "running") {
+        await new Promise((r) => setTimeout(r, 700));
+        if (fileRef.current !== source) return; // model replaced mid-repair
+        job = await api.getRepair(id);
+        setRepairJob(job);
+      }
+      if (job.status === "error") {
+        setRepairJob(null);
+        setRepairError(`Repair failed: ${job.error ?? "unknown error"}`);
+        return;
+      }
+      const buf = await api.getRepairStl(id);
+      if (fileRef.current !== source) return;
+      originalFileRef.current = originalFileRef.current ?? source;
+      const base = source.name.replace(/\.stl$/i, "");
+      await acceptFile(new File([buf], `${base}_repaired.stl`, { type: "model/stl" }), true);
+    } catch (err) {
+      setRepairJob(null);
+      setRepairError(
+        err instanceof Error && err.name === "BackendUnreachableError"
+          ? "Backend unreachable — is the server running on :8000?"
+          : `Repair failed: ${(err as Error).message}`,
+      );
+    }
+  };
+
+  const restoreOriginal = async () => {
+    const original = originalFileRef.current;
+    if (!original) return;
+    originalFileRef.current = null;
+    setRepairJob(null);
+    setRepairError(null);
+    await acceptFile(original, true);
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -630,6 +705,11 @@ export function NewRunView({ onCreated }: Props) {
                   setDims(null);
                   setSelected(false);
                   geometryRef.current = null;
+                  fileRef.current = null;
+                  originalFileRef.current = null;
+                  setInspection(null);
+                  setRepairJob(null);
+                  setRepairError(null);
                 }}
               >
                 replace
@@ -640,6 +720,7 @@ export function NewRunView({ onCreated }: Props) {
                 {dims.map((d) => (d < 100 ? d.toFixed(1) : Math.round(d)).toString()).join(" × ")} {unit}
               </div>
             )}
+            <div className="viewer-alerts">
             {unitWarn && (
               <div className="viewer-unit-warn" role="alert">
                 <span>
@@ -657,6 +738,39 @@ export function NewRunView({ onCreated }: Props) {
                 )}
               </div>
             )}
+            {repairJob?.status === "running" ? (
+              <div className="viewer-repair" role="status">
+                <span>Repairing model · {repairJob.stage}</span>
+                <div className="repair-bar">
+                  <span style={{ width: `${Math.round(repairJob.progress * 100)}%` }} />
+                </div>
+              </div>
+            ) : repairError ? (
+              <div className="viewer-repair viewer-repair-bad" role="alert">
+                <span>&#9888; {repairError}</span>
+                <button type="button" className="chip" onClick={() => void repairModel()}>
+                  try again
+                </button>
+              </div>
+            ) : originalFileRef.current && repairJob?.report ? (
+              <div className="viewer-repair viewer-repair-ok" role="status">
+                <span>&#10003; Repaired: {repairSummary(repairJob.report, unit)}</span>
+                <button type="button" className="chip" onClick={() => void restoreOriginal()}>
+                  restore original
+                </button>
+              </div>
+            ) : inspection && !inspection.watertight ? (
+              <div className="viewer-repair" role="alert">
+                <span>
+                  &#9888; Not a closed surface ({inspectionProblem(inspection)}). It may
+                  mesh badly or stall the solver.
+                </span>
+                <button type="button" className="chip" onClick={() => void repairModel()}>
+                  repair model
+                </button>
+              </div>
+            ) : null}
+            </div>
             <div className="viewer-hint">
               {selected
                 ? "rotate with the axis controls \u00b7 click empty space to deselect"

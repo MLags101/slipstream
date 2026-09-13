@@ -151,6 +151,44 @@ export interface RunResult {
 }
 
 /** GET /api/runs/{id} */
+/** POST /api/stl/inspect: is the surface closed enough to mesh cleanly? */
+export interface StlInspection {
+  triangles: number;
+  watertight: boolean;
+  /** Edges used by only one face (holes). */
+  open_edges: number;
+  /** Edges shared by three or more faces (overlapping/touching shells). */
+  non_manifold_edges: number;
+  bodies: number;
+}
+
+/** Result of a model repair; lengths are in the STL's own units. */
+export interface RepairReport {
+  pitch: number;
+  triangles_in: number;
+  triangles_out: number;
+  open_edges_in: number;
+  non_manifold_edges_in: number;
+  watertight: boolean;
+  bodies: number;
+  decimator: string;
+  alignment_shift: [number, number, number];
+  /** Median signed surface shift vs the original (+ = fatter). */
+  shift_median: number;
+  deviation_p95: number;
+  deviation_max: number;
+  runtime_s: number;
+}
+
+export interface RepairJob {
+  id: string;
+  status: "running" | "done" | "error";
+  progress: number;
+  stage: string;
+  report: RepairReport | null;
+  error: string | null;
+}
+
 /** A prop disk in the prepared model frame (meters), as the solver placed it. */
 export interface PropDiskM {
   center_m: [number, number, number];
@@ -397,6 +435,31 @@ export const api = {
   },
 
   /** Original uploaded STL (original units, uncentered). */
+  /** POST /api/stl/inspect — quick closed-surface check of an STL. */
+  async inspectStl(stl: File): Promise<StlInspection> {
+    const form = new FormData();
+    form.append("stl", stl, stl.name);
+    const res = await request("/stl/inspect", { method: "POST", body: form });
+    return (await res.json()) as StlInspection;
+  },
+
+  /** POST /api/repair — start rebuilding an STL as a closed solid. */
+  async startRepair(stl: File): Promise<{ id: string }> {
+    const form = new FormData();
+    form.append("stl", stl, stl.name);
+    const res = await request("/repair", { method: "POST", body: form });
+    return (await res.json()) as { id: string };
+  },
+
+  getRepair(id: string): Promise<RepairJob> {
+    return getJson<RepairJob>(`/repair/${id}`);
+  },
+
+  async getRepairStl(id: string): Promise<ArrayBuffer> {
+    const res = await request(`/repair/${id}/stl`);
+    return await res.arrayBuffer();
+  },
+
   async getStl(id: string): Promise<ArrayBuffer> {
     const res = await request(`/runs/${id}/stl`);
     return await res.arrayBuffer();

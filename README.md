@@ -21,6 +21,8 @@ no meshing tutorials, no cloud fees.
   aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
   that finds the forward-flight attitude and per-motor thrust for weight and speed
 - Runs **auto-stop when converged**, saving 30–40% of solve time
+- **One-click model repair**: broken CAD exports (holes, overlapping parts, loose
+  sheets) are rebuilt as one closed solid and checked against the original
 - **Half-model symmetry solves** for mirror-symmetric shapes, and a rolling-road
   ground plane for vehicles
 
@@ -74,7 +76,10 @@ show real downwash, inflow, and airframe download without blade-resolved meshing
 ```sh
 # backend (Python 3.12+)
 cd backend && python3 -m venv .venv
-.venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart numpy trimesh meshio
+.venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart numpy scipy trimesh meshio \
+  scikit-image fast-simplification
+# optional (~170 MB): smaller repaired models via topology-preserving decimation
+.venv/bin/pip install pymeshlab
 # frontend (Node 20+)
 cd ../frontend && npm install && npm run build
 # desktop app

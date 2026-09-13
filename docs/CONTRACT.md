@@ -320,3 +320,48 @@ Neither old guard caught this: the divergence trip only fires above `|Cd| > 1e4`
   settled yields a confident-looking meaningless number; frontends MUST NOT present
   `cd` as a result when `converged` is false. `cd_std_last20pct` is now doubled for
   half-model symmetry runs, matching the doubled `cd` it is compared against.
+
+## v7: model repair
+
+Broken CAD exports (open shells, zero-thickness sheets, overlapping parts) are rebuilt
+as one closed, manifold surface by `app/repair.py`, in the STL's own units and
+coordinate frame, so prop positions typed against the original still line up.
+
+Pipeline: surface voxelization at `pitch = max(L / 850, (bbox volume / 120e6)^(1/3))`
+→ fill everything the outside can't reach → Gaussian smooth (σ 0.6 voxel) + marching
+cubes at 0.5 (vertex = `lo + (index + 0.5) * pitch`) → pull vertices 0.62 voxel inward
+along their normals → topology-preserving decimation to ≤ 400k triangles → translation-
+only alignment onto the original → validation.
+
+Calibration and dead ends, measured on the user's aluminum quad-frame export:
+- Raw marching cubes sits +0.58 voxel outside the original; 0.5 voxel inward → +0.24,
+  0.75 → −0.25, hence 0.62. Moving vertices changes no connectivity, so no holes.
+- Raising the iso level instead fragments thin parts (1,000+ bodies) — don't.
+- Keeping only surface voxels whose centers are inside the original loses thin parts
+  (50 bodies, p95 deviation 3 mm) — don't.
+- Decimation: pymeshlab quadric collapse with `preservetopology` reaches the target and
+  stays manifold. `fast_simplification` at `agg=1` cut the frame's 4.5M-triangle
+  surface to 1.8M and stayed manifold, but stalls there and can still pinch other
+  shapes (a subdivided box gains non-manifold edges); `agg≥2` pinches badly, and
+  patching those opens holes. manifold3d `simplify` also leaves geometric pinches. OpenFOAM `surfaceCoarsen`
+  takes >10 min on 4.5M triangles. So: pymeshlab when importable, else
+  `fast_simplification(agg=1)` (valid but larger output); the result is only accepted if
+  it is still closed with no extra bodies.
+
+Endpoints:
+- `POST /api/stl/inspect` (multipart `stl`) → `{triangles, watertight, open_edges,
+  non_manifold_edges, bodies}`; 422 if unreadable.
+- `POST /api/repair` (multipart `stl`) → 201 `{id}`; 409 while another repair runs (it
+  needs up to ~5 GB RAM). Job folders live in `<data>/repairs/<id>/` and are pruned after
+  24 h when a new repair starts.
+- `GET /api/repair/{id}` → `{id, status: running|done|error, progress, stage, report,
+  error}`; report = `{pitch, triangles_in, triangles_out, open_edges_in,
+  non_manifold_edges_in, watertight, bodies, decimator, alignment_shift, shift_median,
+  deviation_p95, deviation_max, runtime_s}` (lengths in STL units; `shift_median` + =
+  fatter than the original).
+- `GET /api/repair/{id}/stl` → repaired binary STL; 409 until done.
+
+Frontend: loading an STL in New run calls inspect; a non-closed surface shows a
+"repair model" banner. Repair polls the job, swaps the loaded file for
+`<name>_repaired.stl` (keeping name, unit, props and attitude), shows the report, and
+offers "restore original".

@@ -5,6 +5,7 @@ import json
 import math
 import os
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -12,7 +13,9 @@ from pathlib import Path
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from . import foamcase, geometry, ondemand, post, trim
+from starlette.concurrency import run_in_threadpool
+
+from . import foamcase, geometry, ondemand, post, repair, trim
 from .runner import Runner
 
 DATA_DIR = Path(
@@ -359,6 +362,103 @@ def get_run(run_id: str):
         "props_m": props_m,
         "result": _compat_result(s["result"]), "error": s["error"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Model repair: inspect an STL, and rebuild a broken one as a closed solid
+# ---------------------------------------------------------------------------
+
+REPAIR_DIR = DATA_DIR.parent / "repairs"
+# Repaired STLs go straight back to the browser; job folders older than this
+# are pruned when a new repair starts so they don't pile up beside run data.
+REPAIR_KEEP_S = 24 * 3600
+_repair_jobs: dict[str, dict] = {}
+_repair_lock = threading.Lock()
+
+
+async def _read_stl_upload(stl: UploadFile) -> bytes:
+    data = await stl.read()
+    if len(data) < 84:
+        raise HTTPException(422, "uploaded file does not look like an STL")
+    return data
+
+
+@app.post("/api/stl/inspect")
+async def inspect_stl(stl: UploadFile):
+    data = await _read_stl_upload(stl)
+    REPAIR_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = REPAIR_DIR / f"inspect-{uuid.uuid4().hex}.stl"
+    tmp.write_bytes(data)
+    try:
+        return await run_in_threadpool(repair.inspect, tmp)
+    except Exception as e:  # noqa: BLE001 — any unreadable upload is a 422
+        raise HTTPException(422, f"could not read STL: {e}")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _prune_repairs() -> None:
+    if not REPAIR_DIR.exists():
+        return
+    cutoff = time.time() - REPAIR_KEEP_S
+    running = {j["id"] for j in _repair_jobs.values() if j["status"] == "running"}
+    for d in REPAIR_DIR.iterdir():
+        if d.is_dir() and d.name not in running and d.stat().st_mtime < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
+            _repair_jobs.pop(d.name, None)
+
+
+def _run_repair(job: dict, job_dir: Path) -> None:
+    def progress(frac: float, stage: str) -> None:
+        job.update(progress=round(frac, 3), stage=stage)
+
+    try:
+        report = repair.repair_stl(job_dir / "input.stl", job_dir / "repaired.stl",
+                                   progress=progress)
+        job.update(status="done", progress=1.0, stage="done", report=report)
+    except MemoryError:
+        job.update(status="error", error="ran out of memory rebuilding the model")
+    except Exception as e:  # noqa: BLE001 — report any failure to the UI
+        job.update(status="error", error=str(e) or type(e).__name__)
+
+
+@app.post("/api/repair", status_code=201)
+async def start_repair(stl: UploadFile):
+    data = await _read_stl_upload(stl)
+    with _repair_lock:
+        if any(j["status"] == "running" for j in _repair_jobs.values()):
+            raise HTTPException(409, "a model repair is already running")
+        _prune_repairs()
+        job_id = uuid.uuid4().hex[:12]
+        job_dir = REPAIR_DIR / job_id
+        job_dir.mkdir(parents=True)
+        (job_dir / "input.stl").write_bytes(data)
+        job = {"id": job_id, "status": "running", "progress": 0.0,
+               "stage": "queued", "report": None, "error": None}
+        _repair_jobs[job_id] = job
+    threading.Thread(target=_run_repair, args=(job, job_dir), daemon=True).start()
+    return {"id": job_id}
+
+
+def _get_repair_job(job_id: str) -> dict:
+    job = _repair_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, "repair job not found")
+    return job
+
+
+@app.get("/api/repair/{job_id}")
+def get_repair(job_id: str):
+    return dict(_get_repair_job(job_id))
+
+
+@app.get("/api/repair/{job_id}/stl")
+def get_repair_stl(job_id: str):
+    job = _get_repair_job(job_id)
+    path = REPAIR_DIR / job_id / "repaired.stl"
+    if job["status"] != "done" or not path.exists():
+        raise HTTPException(409, "repair is not finished")
+    return FileResponse(path, media_type="model/stl", filename="repaired.stl")
 
 
 @app.get("/api/runs/{run_id}/log")

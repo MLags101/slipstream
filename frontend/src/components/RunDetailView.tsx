@@ -151,7 +151,8 @@ export function RunDetailView({
       {run.model?.watertight === false && (
         <div className="warn-banner">
           ⚠ This STL isn't watertight (open or non-manifold surface). It may mesh
-          poorly or fail — consider repairing it in your CAD/slicer.
+          poorly or fail — load it in New run and use <b>repair model</b> to rebuild
+          it as a closed solid, or fix it in your CAD.
         </div>
       )}
 
