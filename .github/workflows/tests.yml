@@ -1,0 +1,59 @@
+# Runs the backend and frontend test suites on every push and pull request.
+# OpenFOAM isn't needed: the tests cover meshing setup, post-processing, guards,
+# model repair and the API, not the solver itself.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # "lean" is what most people install; "full" adds the optional pymeshlab
+        # decimator so both model-repair paths stay covered.
+        deps: [lean, full]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          pip install fastapi 'uvicorn[standard]' python-multipart numpy scipy \
+            trimesh meshio scikit-image fast-simplification pytest httpx
+          if [ "${{ matrix.deps }}" = "full" ]; then pip install pymeshlab; fi
+
+      - name: Run tests
+        working-directory: backend
+        run: python -m pytest -q tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Typecheck, test, build
+        working-directory: frontend
+        run: |
+          npx tsc --noEmit
+          npm test
+          npm run build

@@ -2,6 +2,8 @@
 
 # WindTunnel
 
+[![Tests](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml/badge.svg)](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml)
+
 **Drop in an STL. Get a wind tunnel analysis. Free, local, yours.**
 
 WindTunnel is a desktop virtual wind tunnel for anyone with a shape and a question:
@@ -100,6 +102,16 @@ open dist/WindTunnel.app
 For development, run the backend (`uvicorn app.main:app --port 8000`) and frontend
 (`npm run dev`) separately; see [docs/CONTRACT.md](docs/CONTRACT.md) for the full
 architecture and API.
+
+### Running the tests
+
+```sh
+cd backend && .venv/bin/pip install pytest httpx && .venv/bin/python -m pytest -q tests
+cd ../frontend && npx tsc --noEmit && npm test
+```
+
+The backend tests don't need OpenFOAM. `backend/tests/e2e_smoke.py` runs a real
+coarse analysis against a backend on `:8000` and does.
 
 ## Fair warnings
 
