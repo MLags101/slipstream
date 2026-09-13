@@ -33,9 +33,7 @@ jobs:
         working-directory: backend
         run: |
           python3 -m venv .venv
-          .venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart \
-            numpy scipy trimesh meshio scikit-image fast-simplification \
-            pywebview pyinstaller
+          .venv/bin/pip install -r requirements.txt pywebview pyinstaller
           .venv/bin/pyinstaller --noconfirm --windowed --name WindTunnel \
             --icon ../assets/WindTunnel.icns \
             --add-data "../frontend/dist:ui" \

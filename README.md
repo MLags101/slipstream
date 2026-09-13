@@ -13,6 +13,8 @@ export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
 (the industry-standard open-source CFD solver) in a one-window app: no dictionaries,
 no meshing tutorials, no cloud fees.
 
+![Streamlines around a 5-inch quad frame with spinning prop disks, 25 m/s](docs/images/streamlines.jpg)
+
 - **Drag & drop an STL** → live 3D preview showing exactly how it will sit in the tunnel
 - **Real CFD**: automatic meshing (snappyHexMesh) + steady RANS (simpleFoam, k-ω SST)
 - **Results that matter**: drag & lift coefficients and forces, frontal area,
@@ -27,6 +29,10 @@ no meshing tutorials, no cloud fees.
   sheets) are rebuilt as one closed solid and checked against the original
 - **Half-model symmetry solves** for mirror-symmetric shapes, and a rolling-road
   ground plane for vehicles
+
+| Flow slice: prop downwash and wake | Setup: drop an STL, configure, run |
+|---|---|
+| ![Side flow slice showing prop downwash](docs/images/flow-slice.jpg) | ![Analysis setup with a sample quad frame](docs/images/setup.jpg) |
 
 ## Why
 
@@ -78,8 +84,7 @@ show real downwash, inflow, and airframe download without blade-resolved meshing
 ```sh
 # backend (Python 3.12+)
 cd backend && python3 -m venv .venv
-.venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart numpy scipy trimesh meshio \
-  scikit-image fast-simplification
+.venv/bin/pip install -r requirements.txt
 # optional (~170 MB): smaller repaired models via topology-preserving decimation
 .venv/bin/pip install pymeshlab
 # frontend (Node 20+)

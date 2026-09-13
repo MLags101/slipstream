@@ -14,7 +14,9 @@ external-aero analysis. See `docs/CONTRACT.md` at the repo root for the API cont
 ```sh
 cd backend
 python3 -m venv .venv
-.venv/bin/pip install fastapi 'uvicorn[standard]' python-multipart numpy trimesh meshio
+.venv/bin/pip install -r requirements.txt
+# optional (~170 MB): smaller repaired models via topology-preserving decimation
+.venv/bin/pip install pymeshlab
 ```
 
 ## Run

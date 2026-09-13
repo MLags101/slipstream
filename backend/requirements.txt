@@ -1,0 +1,13 @@
+# WindTunnel backend. OpenFOAM is a separate install (see README).
+fastapi
+uvicorn[standard]
+python-multipart
+numpy
+scipy
+trimesh
+meshio
+# model repair
+scikit-image
+fast-simplification
+# optional (~170 MB), not installed by default: smaller repaired models via
+# topology-preserving decimation —  pip install pymeshlab

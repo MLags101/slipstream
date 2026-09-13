@@ -24,12 +24,12 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install dependencies
         working-directory: backend
         run: |
-          pip install fastapi 'uvicorn[standard]' python-multipart numpy scipy \
-            trimesh meshio scikit-image fast-simplification pytest httpx
+          pip install -r requirements.txt pytest httpx
           if [ "${{ matrix.deps }}" = "full" ]; then pip install pymeshlab; fi
 
       - name: Run tests
