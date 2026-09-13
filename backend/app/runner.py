@@ -21,7 +21,7 @@ import traceback
 from pathlib import Path
 
 from . import foamcase, geometry, post
-from .foamenv import OPENFOAM
+from .foamenv import OPENFOAM, find_openfoam
 
 import signal
 
@@ -171,9 +171,17 @@ class Runner:
         self.update(run_id, log=log_name)
         log_path = case / log_name
         shell = f"cd '{case}' && {cmd} > '{log_path}' 2>&1"
-        # New session -> its own process group, so cancel can kill the whole
-        # mpirun/solver tree in one signal.
-        proc = subprocess.Popen([OPENFOAM, "-c", shell], start_new_session=True)
+        # Resolve per stage, not at import: OpenFOAM installed while the app is
+        # open must work without a restart (the health check already sees it).
+        foam = find_openfoam() or OPENFOAM
+        try:
+            # New session -> its own process group, so cancel can kill the whole
+            # mpirun/solver tree in one signal.
+            proc = subprocess.Popen([foam, "-c", shell], start_new_session=True)
+        except FileNotFoundError:
+            raise RuntimeError(
+                "OpenFOAM not found. Install it with `brew install --cask "
+                "gerlero/openfoam/openfoam`, then re-run.") from None
         self._proc = proc
         try:
             while proc.poll() is None:

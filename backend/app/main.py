@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from starlette.concurrency import run_in_threadpool
 
-from . import foamcase, geometry, ondemand, post, repair, trim
+from . import foamcase, foamenv, geometry, ondemand, post, repair, trim
 from .runner import Runner
 
 DATA_DIR = Path(
@@ -44,9 +44,20 @@ def _get_state(run_id: str) -> dict:
 
 @app.get("/api/health")
 def health():
-    from .foamenv import find_openfoam
-    p = find_openfoam()
+    p = foamenv.find_openfoam()
     return {"ok": True, "openfoam": p, "data_dir": str(DATA_DIR)}
+
+
+OPENFOAM_MISSING = (
+    "OpenFOAM isn't installed (or isn't where WindTunnel can find it). Install it "
+    "with `brew install --cask gerlero/openfoam/openfoam`, then start the run again."
+)
+
+
+def _require_openfoam() -> None:
+    """Refuse to queue a run that can only fail at the first meshing step."""
+    if foamenv.find_openfoam() is None:
+        raise HTTPException(503, OPENFOAM_MISSING)
 
 
 def _compacted_msg(state: dict) -> str | None:
@@ -147,6 +158,7 @@ def prune_runs():
 
 @app.post("/api/runs", status_code=201)
 async def create_run(stl: UploadFile, config: str = Form(...)):
+    _require_openfoam()
     try:
         cfg = json.loads(config)
     except json.JSONDecodeError:
@@ -637,6 +649,7 @@ def rerun(run_id: str):
     """Re-submit a run's exact configuration as a new run. Works even on
     compacted runs (the original STL + config are always kept), so it's the
     recovery path when you need a fresh mesh to slice again."""
+    _require_openfoam()
     _get_state(run_id)
     rd = DATA_DIR / run_id
     stl, cfg_path = rd / "model.stl", rd / "config.json"
