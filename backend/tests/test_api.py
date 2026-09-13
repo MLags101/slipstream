@@ -1,4 +1,4 @@
-"""Repair endpoints end to end, against a throwaway data directory."""
+"""API endpoints end to end, against a throwaway data directory."""
 from __future__ import annotations
 
 import os
@@ -66,3 +66,18 @@ def test_repair_job_round_trip(tmp_path, monkeypatch):
 def test_unknown_job_is_404():
     assert client.get("/api/repair/nope").status_code == 404
     assert client.get("/api/repair/nope/stl").status_code == 404
+
+
+def test_run_is_refused_without_openfoam(monkeypatch):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: None)
+    with open(SPHERE, "rb") as fh:
+        res = client.post("/api/runs", files={"stl": ("s.stl", fh, "model/stl")},
+                          data={"config": '{"unit":"mm","wind_speed":15,"quality":"coarse"}'})
+    assert res.status_code == 503
+    assert "brew install --cask gerlero/openfoam/openfoam" in res.json()["detail"]
+    assert client.get("/api/health").json()["openfoam"] is None
+
+
+def test_health_reports_openfoam_path(monkeypatch):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    assert client.get("/api/health").json()["openfoam"] == "/opt/homebrew/bin/openfoam"
