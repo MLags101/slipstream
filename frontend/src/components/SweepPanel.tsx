@@ -5,6 +5,7 @@ import { isTerminal, StatusPill } from "./StatusPill";
 import { LineChart } from "./LineChart";
 import { formatCoeff, formatForce } from "../lib/format";
 import { downloadText, sweepToCsv, slugify } from "../lib/download";
+import { formatPct, meshSweepHeadline } from "../lib/meshSweep";
 
 // Same categorical palette as the convergence charts.
 const C_BLUE = "#3987e5";
@@ -47,25 +48,43 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
 
   const param = group.param ?? "yaw";
   const isTrim = group.kind === "trim";
+  const isMesh = group.kind === "mesh";
   const angleOf = (m: (typeof group.runs)[number]) =>
     Math.round((m.angle ?? m.yaw_deg) * 100) / 100;
-  // Trim members arrive in iteration order — keep it. Sweeps sort by angle.
-  const members = isTrim
+  // Trim and mesh members arrive in iteration order — keep it. Sweeps sort by angle.
+  const members = isTrim || isMesh
     ? [...group.runs]
     : [...group.runs].sort((a, b) => angleOf(a) - angleOf(b));
   const settled = members.filter((m) => isTerminal(m.status)).length;
   const done = members.filter((m) => m.status === "done" && m.cd !== null);
   const trim = group.trim;
+  const meshHistory = group.mesh?.history ?? [];
+  // Mesh sweeps chart against cell count (millions); sweeps against angle.
+  const xOf = (m: (typeof group.runs)[number]) =>
+    isMesh ? (m.mesh_cells ?? NaN) / 1e6 : angleOf(m);
+  const xLabel = isMesh ? "mesh cells (millions)" : `${param} (deg)`;
+  const chartDone = isMesh
+    ? done.filter((m) => m.mesh_cells !== null && m.mesh_cells !== undefined)
+    : done;
+  const memberLabel = (m: (typeof group.runs)[number]) =>
+    isMesh ? (m.quality ?? "—") : `${angleOf(m)}°`;
 
   return (
     <section className="panel">
       <div className="panel-head">
-        {isTrim ? "Trim solve" : param === "pitch" ? "Pitch sweep" : "Yaw sweep"}
+        {isTrim
+          ? "Trim solve"
+          : isMesh
+            ? "Mesh independence"
+            : param === "pitch"
+              ? "Pitch sweep"
+              : "Yaw sweep"}
         <span className="panel-head-meta">
-          {group.wind_speed} m/s · {group.quality} · {settled}/{members.length}{" "}
-          finished
+          {group.wind_speed} m/s ·{" "}
+          {isMesh ? `tol ${formatPct(group.mesh?.tol_pct)}` : group.quality} ·{" "}
+          {settled}/{members.length} finished
         </span>
-        {!isTrim && done.length >= 2 && (
+        {!isTrim && !isMesh && done.length >= 2 && (
           <button
             className="seg sweep-export"
             title="Download sweep as CSV"
@@ -99,6 +118,17 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
           )}
         </div>
       )}
+      {isMesh && (
+        <div className="trim-strip mono">
+          {group.mesh?.status === "failed" ? (
+            <span className="trim-strip-error">
+              {meshSweepHeadline(group.mesh, members.length)}
+            </span>
+          ) : (
+            meshSweepHeadline(group.mesh, members.length)
+          )}
+        </div>
+      )}
       <div className="sweep-members">
         {members.map((m) => {
           const active = m.id === activeRunId;
@@ -111,7 +141,7 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
               tabIndex={0}
               onKeyDown={(e) => e.key === "Enter" && !active && onSelectRun(m.id)}
             >
-              <span className="sweep-member-yaw mono">{angleOf(m)}°</span>
+              <span className="sweep-member-yaw mono">{memberLabel(m)}</span>
               <StatusPill status={m.status} />
               {m.status === "done" && m.cd !== null && (
                 <span className="sweep-member-cd mono">
@@ -127,33 +157,33 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
           );
         })}
       </div>
-      {done.length >= 2 && (
+      {chartDone.length >= 2 && (
         <>
           <div className="charts">
             <LineChart
-              title={`Cd vs ${param}`}
-              xLabel={`${param} (deg)`}
+              title={isMesh ? "Cd vs mesh size" : `Cd vs ${param}`}
+              xLabel={xLabel}
               markers
               series={[
                 {
                   name: "Cd",
                   color: C_BLUE,
-                  x: done.map((m) => angleOf(m)),
-                  y: done.map((m) => m.cd as number),
+                  x: chartDone.map((m) => xOf(m)),
+                  y: chartDone.map((m) => m.cd as number),
                 },
               ]}
             />
             <LineChart
-              title={`Drag vs ${param}`}
-              xLabel={`${param} (deg)`}
+              title={isMesh ? "Drag vs mesh size" : `Drag vs ${param}`}
+              xLabel={xLabel}
               markers
               series={[
                 {
                   name: "drag (N)",
                   color: C_AQUA,
-                  x: done.map((m) => angleOf(m)),
+                  x: chartDone.map((m) => xOf(m)),
                   // LineChart drops non-finite points.
-                  y: done.map((m) => m.drag_N ?? NaN),
+                  y: chartDone.map((m) => m.drag_N ?? NaN),
                 },
               ]}
             />
@@ -162,21 +192,35 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>{param}</th>
+                  <th>{isMesh ? "mesh" : param}</th>
+                  {isMesh && <th>cells</th>}
                   <th>Cd</th>
                   <th>drag</th>
+                  {isMesh && <th>Cd change</th>}
                 </tr>
               </thead>
               <tbody>
                 {members.map((m) => (
                   <tr key={m.id}>
-                    <td className="mono">{angleOf(m)}°</td>
+                    <td className="mono">{memberLabel(m)}</td>
+                    {isMesh && (
+                      <td className="mono">
+                        {m.mesh_cells ? m.mesh_cells.toLocaleString("en-US") : "—"}
+                      </td>
+                    )}
                     <td className="mono">
                       {m.cd !== null ? formatCoeff(m.cd) : "—"}
                     </td>
                     <td className="mono">
                       {m.drag_N !== null ? formatForce(m.drag_N) : "—"}
                     </td>
+                    {isMesh && (
+                      <td className="mono">
+                        {formatPct(
+                          meshHistory.find((h) => h.quality === m.quality)?.change_pct,
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

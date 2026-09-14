@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from starlette.concurrency import run_in_threadpool
 
-from . import foamcase, foamenv, geometry, ondemand, post, repair, trim
+from . import foamcase, foamenv, geometry, mesh, ondemand, post, repair, trim
 from .runner import Runner
 
 DATA_DIR = Path(
@@ -244,6 +244,19 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         if not _num(td) or td <= 0:
             raise HTTPException(422, "trim.tol_deg must be a positive number")
 
+    mesh_req = cfg.get("mesh_sweep")
+    if mesh_req is not None:
+        if mesh_req is True:
+            mesh_req = {}
+        if not isinstance(mesh_req, dict):
+            raise HTTPException(422, "mesh_sweep must be an object like {\"tol_pct\": 2}")
+        tol_pct = mesh_req.get("tol_pct", mesh.DEFAULT_TOL_PCT)
+        if not (_num(tol_pct) and 0 < tol_pct <= 50):
+            raise HTTPException(422, "mesh_sweep.tol_pct must be a number in (0, 50]")
+        if sweeps or trim_req is not None:
+            raise HTTPException(
+                422, "mesh_sweep cannot be combined with a yaw/pitch sweep or trim")
+
     # Half-model symmetry only makes sense for a left-right-symmetric setup:
     # 0° yaw, 0° roll, no yaw sweep, no props, no trim. Pitch (about Y)
     # preserves the left-right symmetry, so pitch_deg / pitch_sweep are
@@ -261,6 +274,10 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     data = await stl.read()
     if len(data) < 84:
         raise HTTPException(422, "uploaded file does not look like an STL")
+
+    if mesh_req is not None:
+        cfg["mesh_sweep"] = {"tol_pct": float(tol_pct)}
+        return _submit_mesh_sweep(data, cfg)
 
     if trim_req is not None:
         cfg["trim"] = {"weight_g": float(trim_req["weight_g"]),
@@ -332,6 +349,19 @@ def _submit_trim(stl_bytes: bytes, cfg: dict) -> dict:
         first_run_id=first_id, first_pitch_rad=theta1,
         summary_dir=DATA_DIR / first_id)
     controller.start()
+    return {"id": first_id, "group_id": group_id, "ids": [first_id]}
+
+
+def _submit_mesh_sweep(stl_bytes: bytes, cfg: dict) -> dict:
+    """Submit the coarse run and start the controller that refines from there."""
+    group_id = uuid.uuid4().hex
+    first_id = _submit_run(stl_bytes, mesh.member_cfg(cfg, mesh.QUALITIES[0]),
+                           group_id=group_id)
+    mesh.MeshSweepController(
+        runner=runner,
+        submit=lambda c: _submit_run(stl_bytes, c, group_id=group_id),
+        base_cfg=cfg, group_id=group_id, first_run_id=first_id,
+        summary_dir=DATA_DIR / first_id).start()
     return {"id": first_id, "group_id": group_id, "ids": [first_id]}
 
 
@@ -520,7 +550,8 @@ def get_group(group_id: str):
         raise HTTPException(404, "group not found")
     param = members[0]["config"].get("sweep_param", "yaw")
     is_trim = any(s["config"].get("trim") for s in members)
-    if is_trim:  # trim iterations in submission order, not angle order
+    is_mesh = any(s["config"].get("mesh_sweep") for s in members)
+    if is_trim or is_mesh:  # iterations in submission order, not angle order
         members.sort(key=lambda s: s["created_at"])
     else:
         members.sort(key=lambda s: float(s["config"].get(f"{param}_deg") or 0))
@@ -537,6 +568,8 @@ def get_group(group_id: str):
             "progress": s["progress"],
             "cd": result.get("cd") if result else None,
             "drag_N": result.get("drag_N") if result else None,
+            "quality": s["config"].get("quality"),
+            "mesh_cells": result.get("mesh_cells") if result else None,
         })
     # Members are named "<base> @ N°"; the group carries the base name.
     name = first["name"].rsplit(" @ ", 1)[0]
@@ -544,7 +577,7 @@ def get_group(group_id: str):
         "group_id": group_id,
         "name": name,
         "param": param,
-        "kind": "trim" if is_trim else "sweep",
+        "kind": "trim" if is_trim else "mesh" if is_mesh else "sweep",
         "wind_speed": first["config"].get("wind_speed"),
         "quality": first["config"].get("quality"),
         "runs": runs,
@@ -562,6 +595,17 @@ def get_group(group_id: str):
         # No summary yet (still trimming, or controller lost to a restart):
         # report partial progress.
         out["trim"] = summary or {"converged": None, "iterations": len(members)}
+    if is_mesh:
+        p = DATA_DIR / members[0]["id"] / "mesh_summary.json"
+        summary = None
+        if p.exists():
+            try:
+                summary = json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                summary = None
+        out["mesh"] = summary or {
+            "status": None, "steps": len(members),
+            "tol_pct": first["config"].get("mesh_sweep", {}).get("tol_pct")}
     return out
 
 

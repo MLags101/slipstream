@@ -64,6 +64,12 @@ export interface RunConfig {
    * pitch and per-prop thrust until equilibrium.
    */
   trim?: { weight_g: number; max_iters?: number; tol_deg?: number };
+  /**
+   * v8: mesh-independence sweep. Runs coarse -> medium -> fine (shared group)
+   * and stops once one refinement changes Cd by <= tol_pct. `quality` is set
+   * per member. Mutually exclusive with sweeps and trim.
+   */
+  mesh_sweep?: { tol_pct?: number };
 }
 
 export interface PropSpec {
@@ -226,6 +232,35 @@ export interface GroupMember {
   /** null until that member is done. */
   cd: number | null;
   drag_N: number | null;
+  /** v8: mesh quality of this member (meaningful for mesh sweeps). */
+  quality?: Quality;
+  /** v8: cell count once done. */
+  mesh_cells?: number | null;
+}
+
+/** v8: one finished step of a mesh-independence sweep. */
+export interface MeshSweepStep {
+  quality: Quality;
+  mesh_cells: number | null;
+  cd: number;
+  drag_N: number | null;
+  converged: boolean | null;
+  /** Cd change vs the previous (coarser) step, percent; null for the first. */
+  change_pct: number | null;
+}
+
+/** v8: mesh-independence sweep progress/result (GroupDetail.mesh). */
+export interface MeshSweepSummary {
+  /** null while still refining. */
+  status: "independent" | "not_independent" | "failed" | null;
+  /** Coarsest mesh whose Cd the next refinement confirmed within tol. */
+  independent_at?: Quality | null;
+  /** Cd of the finest finished run (the best estimate). */
+  best_cd?: number | null;
+  tol_pct?: number | null;
+  steps?: number;
+  history?: MeshSweepStep[];
+  error?: string | null;
 }
 
 /** v3.1: trim solver progress/result (GroupDetail.trim for trim groups). */
@@ -255,14 +290,16 @@ export interface GroupDetail {
   group_id: string;
   name: string;
   /** Which angle the sweep varies; "yaw" for pre-v2.1 groups. */
-  param?: "yaw" | "pitch";
+  param?: "yaw" | "pitch" | "quality";
   /** v3.1: "trim" for trim-solver groups (members are iterations). */
-  kind?: "sweep" | "trim";
+  kind?: "sweep" | "trim" | "mesh";
   wind_speed: number;
   quality: Quality;
   runs: GroupMember[];
   /** v3.1: present for trim groups (partial while iterating). */
   trim?: TrimSummary;
+  /** v8: present for mesh-independence sweeps (partial while refining). */
+  mesh?: MeshSweepSummary;
 }
 
 /** GET /api/runs/{id}/log?tail=N */

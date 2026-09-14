@@ -365,3 +365,30 @@ Frontend: loading an STL in New run calls inspect; a non-closed surface shows a
 "repair model" banner. Repair polls the job, swaps the loaded file for
 `<name>_repaired.stl` (keeping name, unit, props and attitude), shows the report, and
 offers "restore original".
+
+## v8: mesh-independence sweep
+
+`POST /api/runs` config gains `"mesh_sweep": {"tol_pct": 2}` (0 < tol ≤ 50; `true` means
+the default 2%). Mutually exclusive with `yaw_sweep` / `pitch_sweep` / `trim` (422).
+`app/mesh.py`'s `MeshSweepController` (same pattern as the trim solver) submits the setup
+at `coarse`, waits for it, then refines to `medium` and `fine`, stopping at the first
+refinement whose Cd change (relative to the finer run) is ≤ `tol_pct`:
+
+- coarse → medium within tol → `independent`, `independent_at: "coarse"` (fine never runs)
+- medium → fine within tol → `independent`, `independent_at: "medium"`
+- still above tol at fine → `not_independent`
+- a member error/cancel → `failed` with `error`
+
+Members share a `group_id`, are named `<base> @ <quality> mesh`, carry
+`sweep_param: "quality"`, and the summary is `mesh_summary.json` in the first member's
+directory: `{status, independent_at, best_cd (finest finished run), tol_pct, steps,
+history: [{quality, mesh_cells, cd, drag_N, converged, change_pct}], error}`.
+
+`GET /api/groups/{gid}` for these groups: `kind: "mesh"`, `param: "quality"`, members in
+submission order with `quality` and `mesh_cells`, and `mesh` = the summary (or
+`{status: null, steps, tol_pct}` while refining or if the controller was lost to a
+restart).
+
+Frontend: New run has a "Mesh independence" checkbox with a tolerance input (disables the
+quality select, sweeps and trim). The group panel shows the status strip, Cd and drag vs
+mesh cells (millions), and a table with cells, Cd, drag and Cd change per step.

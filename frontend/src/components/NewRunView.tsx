@@ -66,6 +66,9 @@ export function NewRunView({ onCreated }: Props) {
   >([{ x: "0", y: "0", z: "0", d: "127", t: "300" }]);
   const [trimEnabled, setTrimEnabled] = useState(false);
   const [trimWeight, setTrimWeight] = useState("650");
+  // Mesh-independence sweep: coarse -> medium -> fine until Cd settles.
+  const [meshSweep, setMeshSweep] = useState(false);
+  const [meshTol, setMeshTol] = useState("2");
   // Trim solves pitch + per-prop thrust itself; only live with prop disks.
   const trimOn = propsEnabled && trimEnabled;
   const [refArea, setRefArea] = useState(""); // cm², blank = auto (frontal)
@@ -618,6 +621,15 @@ export function NewRunView({ onCreated }: Props) {
       }
       trimCfg = { weight_g: w };
     }
+    let meshTolPct: number | undefined;
+    if (meshSweep) {
+      const tol = parseFloat(meshTol);
+      if (!Number.isFinite(tol) || tol <= 0 || tol > 50) {
+        setSubmitError("Mesh sweep tolerance must be a percentage above 0 and at most 50");
+        return;
+      }
+      meshTolPct = tol;
+    }
     const yawSwept = sweepEnabled && sweepParam === "yaw";
     const pitchSwept = sweepEnabled && sweepParam === "pitch";
     const yaw = yawSwept ? 0 : parseFloat(yawDeg);
@@ -667,6 +679,7 @@ export function NewRunView({ onCreated }: Props) {
       ...(pitchSwept ? { pitch_sweep: sweep } : {}),
       ...(props && props.length ? { props } : {}),
       ...(trimCfg ? { trim: trimCfg } : {}),
+      ...(meshTolPct !== undefined ? { mesh_sweep: { tol_pct: meshTolPct } } : {}),
       ...(refAreaCm2 ? { ref_area_cm2: refAreaCm2 } : {}),
       ...(roll ? { roll_deg: roll } : {}),
       ...(groundPlane ? { ground_plane: true } : {}),
@@ -1033,7 +1046,10 @@ export function NewRunView({ onCreated }: Props) {
             <input
               type="checkbox"
               checked={sweepEnabled}
-              onChange={(e) => setSweepEnabled(e.target.checked)}
+              onChange={(e) => {
+                setSweepEnabled(e.target.checked);
+                if (e.target.checked) setMeshSweep(false);
+              }}
               disabled={!file || trimOn}
               title={trimOn ? "unavailable while solving trim" : undefined}
             />
@@ -1047,6 +1063,34 @@ export function NewRunView({ onCreated }: Props) {
               <option value="yaw">yaw</option>
               <option value="pitch">pitch</option>
             </select>
+          </label>
+          <label className="check-field">
+            <input
+              type="checkbox"
+              checked={meshSweep}
+              onChange={(e) => {
+                setMeshSweep(e.target.checked);
+                if (e.target.checked) {
+                  setSweepEnabled(false);
+                  setTrimEnabled(false);
+                }
+              }}
+              disabled={!file}
+              title="Rerun at coarse, medium and fine meshes until Cd stops changing"
+            />
+            <span>Mesh independence — refine until Cd changes ≤</span>
+            <input
+              type="number"
+              className="mono mesh-tol"
+              value={meshTol}
+              min={0.1}
+              max={50}
+              step="any"
+              onChange={(e) => setMeshTol(e.target.value)}
+              disabled={!file || !meshSweep}
+              aria-label="Cd change tolerance (percent)"
+            />
+            <span>%</span>
           </label>
           <label className="check-field">
             <input
@@ -1128,7 +1172,10 @@ export function NewRunView({ onCreated }: Props) {
                   checked={trimEnabled}
                   onChange={(e) => {
                     setTrimEnabled(e.target.checked);
-                    if (e.target.checked) setSweepEnabled(false);
+                    if (e.target.checked) {
+                      setSweepEnabled(false);
+                      setMeshSweep(false);
+                    }
                   }}
                 />
                 <span>Solve trim attitude</span>
@@ -1198,7 +1245,7 @@ export function NewRunView({ onCreated }: Props) {
             <select
               value={quality}
               onChange={(e) => setQuality(e.target.value as Quality)}
-              disabled={!file}
+              disabled={!file || meshSweep}
             >
               {(Object.keys(QUALITY_HINTS) as Quality[]).map((q) => (
                 <option key={q} value={q}>
@@ -1206,6 +1253,11 @@ export function NewRunView({ onCreated }: Props) {
                 </option>
               ))}
             </select>
+            {meshSweep && (
+              <span className="config-note">
+                set by the mesh sweep: coarse, then medium and fine only if needed
+              </span>
+            )}
           </label>
         </div>
         {submitError && <div className="form-error">{submitError}</div>}
@@ -1216,7 +1268,9 @@ export function NewRunView({ onCreated }: Props) {
         >
           {submitting
             ? "Starting…"
-            : trimOn
+            : meshSweep
+              ? "Run mesh independence sweep"
+              : trimOn
               ? "Run trim solve"
               : sweepEnabled
                 ? `Run ${sweepParam} sweep`

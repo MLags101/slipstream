@@ -81,3 +81,23 @@ def test_run_is_refused_without_openfoam(monkeypatch):
 def test_health_reports_openfoam_path(monkeypatch):
     monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
     assert client.get("/api/health").json()["openfoam"] == "/opt/homebrew/bin/openfoam"
+
+
+@pytest.mark.parametrize("extra, fragment", [
+    ({"mesh_sweep": {"tol_pct": 2}, "trim": {"weight_g": 700}}, "cannot be combined"),
+    ({"mesh_sweep": {"tol_pct": 2}, "yaw_sweep": [0, 15]}, "cannot be combined"),
+    ({"mesh_sweep": {"tol_pct": 0}}, "tol_pct"),
+    ({"mesh_sweep": {"tol_pct": 80}}, "tol_pct"),
+    ({"mesh_sweep": "yes"}, "mesh_sweep must be an object"),
+])
+def test_mesh_sweep_validation(monkeypatch, extra, fragment):
+    import json as _json
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    cfg = {"unit": "mm", "wind_speed": 15, "quality": "coarse", **extra}
+    if "trim" in extra:
+        cfg["props"] = [{"center": [0, 0, 0], "diameter": 127, "thrust_g": 200}]
+    with open(SPHERE, "rb") as fh:
+        res = client.post("/api/runs", files={"stl": ("s.stl", fh, "model/stl")},
+                          data={"config": _json.dumps(cfg)})
+    assert res.status_code == 422, res.text
+    assert fragment in res.json()["detail"]
