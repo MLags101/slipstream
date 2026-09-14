@@ -5,8 +5,7 @@
  * - legend (always shown for >= 2 series), hover crosshair + tooltip
  */
 import { useMemo, useRef, useState, useEffect } from "react";
-import { linearTicks, logTicks, formatLogTick } from "../lib/scale";
-import { formatCompact } from "../lib/format";
+import { linearTicks, logTicks, formatLogTick, formatTick } from "../lib/scale";
 
 export interface ChartSeries {
   name: string;
@@ -86,7 +85,10 @@ export function LineChart({
   const innerW = Math.max(10, width - MARGIN.left - MARGIN.right);
   const innerH = height - MARGIN.top - MARGIN.bottom;
 
-  const fmtY = formatY ?? (log ? formatLogTick : formatCompact);
+  // Default linear labels use the tick spacing's precision, so a narrow range
+  // (e.g. Cd 1.158-1.166) gets distinct labels instead of "1.16" four times.
+  const yDecimals = model?.yTicks.decimals ?? 2;
+  const fmtY = formatY ?? (log ? formatLogTick : (v: number) => formatTick(v, yDecimals));
 
   if (!model || width === 0) {
     return (
@@ -209,7 +211,7 @@ export function LineChart({
                 textAnchor="middle"
                 className="tick"
               >
-                {t}
+                {formatTick(t, xTicks.decimals)}
               </text>
             ))}
           {/* baseline */}
