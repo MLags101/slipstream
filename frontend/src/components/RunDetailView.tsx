@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type History, type LogTail, type RunDetail } from "../api";
 import { usePoll } from "../hooks/usePoll";
+import { shortRunId } from "../lib/format";
 import { refinementLabel } from "../lib/refinementText";
 import { ResolvePanel } from "./ResolvePanel";
 import { isTerminal } from "./StatusPill";
@@ -20,6 +21,8 @@ interface Props {
   onSelectRun: (id: string) => void;
   /** Resubmit this run's exact config as a new run. */
   onRerun: (id: string) => void;
+  /** The run was renamed: refresh the run list. */
+  onRenamed: () => void;
 }
 
 // Chart series colors — validated 4-slot dark categorical palette.
@@ -34,11 +37,42 @@ export function RunDetailView({
   onUnreachable,
   onSelectRun,
   onRerun,
+  onRenamed,
 }: Props) {
   const fetchRun = useCallback(() => api.getRun(id), [id]);
   const [cancelling, setCancelling] = useState(false);
   const [resolving, setResolving] = useState(false);
-  useEffect(() => setResolving(false), [id]);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const renameInput = useRef<HTMLInputElement>(null);
+  const renameOpen = renaming !== null;
+  // Focus the box and select the old name when the form opens, so typing
+  // replaces it (autoFocus runs before an onFocus handler could select).
+  useEffect(() => {
+    if (renameOpen) renameInput.current?.select();
+  }, [renameOpen]);
+  useEffect(() => {
+    setResolving(false);
+    setRenaming(null);
+    setRenameError(null);
+  }, [id]);
+
+  const saveName = async () => {
+    if (renaming === null) return;
+    const name = renaming.trim();
+    if (!name) {
+      setRenameError("Name can't be empty");
+      return;
+    }
+    try {
+      setSnapshot(await api.renameRun(id, name));
+      setRenaming(null);
+      setRenameError(null);
+      onRenamed();
+    } catch (err) {
+      setRenameError(`Rename failed: ${(err as Error).message}`);
+    }
+  };
 
   const [snapshot, setSnapshot] = useState<RunDetail | null>(null);
   const terminal = snapshot !== null && isTerminal(snapshot.status);
@@ -116,11 +150,56 @@ export function RunDetailView({
   return (
     <div className="detail">
       <header className="detail-header">
-        <div className="detail-title">
-          <h1>{run.name}</h1>
-          <StatusPill status={run.status} />
-        </div>
+        {renaming === null ? (
+          <div className="detail-title">
+            <h1>{run.name}</h1>
+            <button
+              className="btn btn-ghost btn-sm"
+              onClick={() => setRenaming(run.name)}
+              title="Rename this run"
+            >
+              Rename
+            </button>
+            <StatusPill status={run.status} />
+          </div>
+        ) : (
+          <form
+            className="detail-rename"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void saveName();
+            }}
+          >
+            <input
+              className="mono"
+              value={renaming}
+              maxLength={200}
+              ref={renameInput}
+              aria-label="Run name"
+              onChange={(e) => setRenaming(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setRenaming(null);
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void saveName();
+                }
+              }}
+            />
+            <button type="submit" className="btn btn-primary btn-sm">
+              Save
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setRenaming(null)}
+            >
+              Cancel
+            </button>
+            {renameError && <span className="form-error">{renameError}</span>}
+          </form>
+        )}
         <div className="detail-meta mono">
+          <span title={`Run ID ${run.id}`}>#{shortRunId(run.id)}</span> ·{" "}
           {run.config.wind_speed} m/s · yaw {run.config.yaw_deg}° · {run.config.quality}
           {refinementLabel(run.config.refinement, run.refinement)}
           {run.model && ` · ${run.model.triangles.toLocaleString("en-US")} tris`}

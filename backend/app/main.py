@@ -15,7 +15,10 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 
 from starlette.concurrency import run_in_threadpool
 
+import trimesh
+
 from . import foamcase, foamenv, geometry, mesh, ondemand, post, repair, trim
+from . import props as prop_detect
 from .runner import Runner
 
 DATA_DIR = Path(
@@ -458,6 +461,25 @@ async def inspect_stl(stl: UploadFile):
         tmp.unlink(missing_ok=True)
 
 
+@app.post("/api/stl/props")
+async def detect_stl_props(stl: UploadFile, unit: str = Form("mm")):
+    """Suggest prop disks on a multirotor's motors (STL units). `props` is
+    empty, with a `reason`, when no motors are recognized."""
+    if unit not in VALID_UNITS:
+        raise HTTPException(422, f"unit must be one of {sorted(VALID_UNITS)}")
+    data = await _read_stl_upload(stl)
+    REPAIR_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = REPAIR_DIR / f"props-{uuid.uuid4().hex}.stl"
+    tmp.write_bytes(data)
+    try:
+        model = await run_in_threadpool(trimesh.load, tmp, force="mesh")
+        return await run_in_threadpool(prop_detect.detect_props, model, unit)
+    except Exception as e:  # noqa: BLE001 — any unreadable upload is a 422
+        raise HTTPException(422, f"could not read STL: {e}")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def _prune_repairs() -> None:
     if not REPAIR_DIR.exists():
         return
@@ -723,6 +745,23 @@ def rerun(run_id: str):
     for k in ("sweep_param", "trim"):
         cfg.pop(k, None)
     return {"id": _submit_run(stl.read_bytes(), cfg, group_id=None)}
+
+
+@app.patch("/api/runs/{run_id}")
+async def rename_run(run_id: str, request: Request):
+    """Rename a run (the only editable field). Works in any status."""
+    _get_state(run_id)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    name = body.get("name") if isinstance(body, dict) else None
+    if not isinstance(name, str) or not name.strip() or len(name.strip()) > 200:
+        raise HTTPException(422, "name must be a non-empty string of at most 200 characters")
+    if set(body) != {"name"}:
+        raise HTTPException(422, "only name can be changed")
+    runner.update(run_id, name=name.strip())
+    return get_run(run_id)
 
 
 def _has_mesh(run_id: str) -> bool:

@@ -61,11 +61,14 @@ export function NewRunView({ onCreated }: Props) {
   const [sweepParam, setSweepParam] = useState<"yaw" | "pitch">("yaw");
   const [sweepAngles, setSweepAngles] = useState("0, 15, 30, 45");
   const [propsEnabled, setPropsEnabled] = useState(false);
+  const [detectingProps, setDetectingProps] = useState(false);
+  const [propNote, setPropNote] = useState<string | null>(null);
   const [propRows, setPropRows] = useState<
     { x: string; y: string; z: string; d: string; t: string }[]
   >([{ x: "0", y: "0", z: "0", d: "127", t: "300" }]);
   const [trimEnabled, setTrimEnabled] = useState(false);
-  const [trimWeight, setTrimWeight] = useState("650");
+  // No default: trim results scale with weight, so it must be entered.
+  const [trimWeight, setTrimWeight] = useState("");
   // Mesh-independence sweep: coarse -> medium -> fine until Cd settles.
   const [meshSweep, setMeshSweep] = useState(false);
   const [meshTol, setMeshTol] = useState("2");
@@ -209,6 +212,35 @@ export function NewRunView({ onCreated }: Props) {
         t: "300",
       };
     });
+  };
+
+  // Ask the backend to find the motors (distance-transform pads on the
+  // footprint) and put the disks on them; fall back to the frame corners.
+  const detectPropRows = async () => {
+    if (!file) return;
+    setDetectingProps(true);
+    try {
+      const found = await api.detectProps(file, unit);
+      if (found.props.length) {
+        setPropRows(
+          found.props.map((p) => ({
+            x: String(p.center[0]),
+            y: String(p.center[1]),
+            z: String(p.center[2]),
+            d: String(p.diameter),
+            t: "300",
+          })),
+        );
+        setPropNote(`found ${found.props.length} motors — disks placed on top of them`);
+      } else {
+        setPropRows(seedPropRows(4));
+        setPropNote(`no motors recognized (${found.reason}) — disks placed at the frame corners`);
+      }
+    } catch {
+      setPropNote("motor detection unavailable — disks placed at the frame corners");
+    } finally {
+      setDetectingProps(false);
+    }
   };
 
   useEffect(() => {
@@ -620,6 +652,12 @@ export function NewRunView({ onCreated }: Props) {
     let trimCfg: RunConfig["trim"];
     if (trimOn) {
       const w = parseFloat(trimWeight);
+      if (trimWeight.trim() === "") {
+        setSubmitError(
+          "Enter the craft's weight in grams — the trim attitude and thrust depend on it",
+        );
+        return;
+      }
       if (!Number.isFinite(w) || w <= 0) {
         setSubmitError("Craft weight must be a positive number of grams");
         return;
@@ -1111,9 +1149,13 @@ export function NewRunView({ onCreated }: Props) {
               checked={propsEnabled}
               onChange={(e) => {
                 setPropsEnabled(e.target.checked);
-                // Seed a four-rotor layout on the frame the first time, so the
-                // disks appear where rotors are instead of inside the model.
-                if (e.target.checked) setPropRows(seedPropRows(4));
+                setPropNote(null);
+                // Seed a four-rotor layout on the frame at once, then move the
+                // disks onto the motors if the backend finds them.
+                if (e.target.checked) {
+                  setPropRows(seedPropRows(4));
+                  void detectPropRows();
+                }
               }}
               disabled={!file}
             />
@@ -1174,11 +1216,21 @@ export function NewRunView({ onCreated }: Props) {
                 >
                   + add propeller
                 </button>
+                <button
+                  type="button"
+                  className="chip"
+                  disabled={detectingProps}
+                  onClick={() => void detectPropRows()}
+                  title="Find the motors in the model and place one disk on each"
+                >
+                  {detectingProps ? "finding motors…" : "detect motors"}
+                </button>
                 <span className="config-note">
                   positions/ø in STL units · thrust axis = model +Z
                   {trimOn && " · thrust solved by trim"}
                 </span>
               </div>
+              {propNote && <div className="config-note">{propNote}</div>}
               <label className="check-field">
                 <input
                   type="checkbox"
@@ -1195,7 +1247,7 @@ export function NewRunView({ onCreated }: Props) {
               </label>
               {trimEnabled && (
                 <label className="field">
-                  <span className="field-label">Craft weight (g)</span>
+                  <span className="field-label">Craft weight (g) — required</span>
                   <input
                     type="number"
                     className="mono"
@@ -1203,6 +1255,8 @@ export function NewRunView({ onCreated }: Props) {
                     onChange={(e) => setTrimWeight(e.target.value)}
                     min={1}
                     step="any"
+                    placeholder="all-up weight, e.g. 650"
+                    required
                   />
                   <span className="config-note">
                     iterates pitch + per-prop thrust until thrust balances

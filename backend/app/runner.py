@@ -46,8 +46,9 @@ class Runner:
         self._load_existing()
         # Nothing is solving at startup, so any leftover per-processor
         # decomposition is dead weight — reclaim it (harmless, ~45%/run).
-        for rid in self.states:
+        for rid in list(self.states):
             foamcase.free_processor_dirs(self.data_dir / rid / "case")
+            self._clean_if_failed(rid)
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
@@ -151,6 +152,20 @@ class Runner:
                 with self.lock:
                     self._cancel.discard(run_id)
                     self.current = None
+                self._clean_if_failed(run_id)
+
+    def _clean_if_failed(self, run_id: str) -> None:
+        """A failed or cancelled run's mesh and fields are dead weight (often
+        GBs); drop them but keep logs and convergence history. Re-run still
+        works from the kept STL + config."""
+        s = self.get(run_id)
+        if not s or s["status"] not in ("error", "cancelled") or s.get("mesh_freed"):
+            return
+        freed = foamcase.clean_failed_case(self.run_dir(run_id) / "case")
+        try:
+            self.update(run_id, mesh_freed=True, freed_bytes=freed)
+        except KeyError:  # deleted meanwhile
+            pass
 
     def cancel(self, run_id: str) -> bool:
         """Request cancellation. Running: signals the pipeline to stop. Queued:

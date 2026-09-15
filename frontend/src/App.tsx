@@ -161,6 +161,7 @@ export default function App() {
               onUnreachable={setDetailUnreachable}
               onSelectRun={openRun}
               onRerun={handleRerun}
+              onRenamed={() => setRefresh((n) => n + 1)}
             />
           )}
         </main>

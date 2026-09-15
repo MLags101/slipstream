@@ -11,3 +11,6 @@ backend/*.spec
 # Personal models / scratch configs — never publish
 data_prep/
 frontend/public/__test_*
+
+# Generated validation models (examples/validation/make_models.py)
+examples/validation/*.stl

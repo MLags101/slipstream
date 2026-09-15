@@ -23,7 +23,8 @@ no meshing tutorials, no cloud fees.
   (with sweep animation), velocity-colored streamlines
 - **Go further**: yaw/pitch sweeps with angle charts, two-run comparison, and — for
   aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
-  that finds the forward-flight attitude and per-motor thrust for weight and speed
+  that finds the forward-flight attitude and per-motor thrust for weight and speed.
+  Prop disks are placed on the motors automatically
 - Runs **auto-stop when converged**, saving 30–40% of solve time, and the mesh is
   built on all cores
 - **Re-solve on an existing mesh**: change wind speed or prop thrust and skip meshing
@@ -35,6 +36,8 @@ no meshing tutorials, no cloud fees.
   sheets) are rebuilt as one closed solid and checked against the original
 - **Half-model symmetry solves** for mirror-symmetric shapes, and a rolling-road
   ground plane for vehicles
+- **Tidy run history**: rename runs, short run IDs, and failed runs free their
+  mesh automatically (logs and convergence charts stay)
 
 | Flow slice: prop downwash and wake | Setup: drop an STL, configure, run |
 |---|---|
@@ -56,10 +59,10 @@ dropping in an STL.
    ```sh
    brew install --cask gerlero/openfoam/openfoam
    ```
-2. **Install WindTunnel**: [build from source](#building-from-source) (a few
-   minutes). Prebuilt `WindTunnel.zip` downloads will be posted under
-   [Releases](../../releases). After unzipping one into `/Applications`, read the
-   first-launch note below.
+2. **Install WindTunnel**: download `WindTunnel-<version>-macos-arm64.zip` from the
+   latest [release](../../releases/latest) (Apple Silicon Macs), unzip it, move
+   `WindTunnel.app` to `/Applications`, and read the first-launch note below.
+   On an Intel Mac, [build from source](#building-from-source) instead.
 3. **Run your first analysis**: open WindTunnel, drop an STL onto the target,
    check the unit (mm for 3D-print exports), set a wind speed, pick **coarse**
    quality, and hit **Run analysis**. A few minutes later you'll have a drag

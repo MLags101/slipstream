@@ -102,6 +102,14 @@ export interface RefinementInfo {
   slipstreams: { level: number; cell_mm: number; direction: [number, number, number] }[];
 }
 
+/** POST /api/stl/props: motors found in a multirotor STL. */
+export interface PropDetection {
+  props: { center: [number, number, number]; diameter: number }[];
+  motor_radius?: number;
+  /** Why nothing was found (props is then empty). */
+  reason: string | null;
+}
+
 export interface PropSpec {
   center: [number, number, number];
   diameter: number;
@@ -469,6 +477,24 @@ export const api = {
   async rerunRun(id: string): Promise<{ id: string }> {
     const res = await request(`/runs/${id}/rerun`, { method: "POST" });
     return (await res.json()) as { id: string };
+  },
+
+  /** Suggest prop disks on a multirotor's motors (positions in STL units). */
+  async detectProps(stl: File, unit: string): Promise<PropDetection> {
+    const form = new FormData();
+    form.append("stl", stl, stl.name);
+    form.append("unit", unit);
+    const res = await request("/stl/props", { method: "POST", body: form });
+    return (await res.json()) as PropDetection;
+  },
+
+  async renameRun(id: string, name: string): Promise<RunDetail> {
+    const res = await request(`/runs/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    return (await res.json()) as RunDetail;
   },
 
   /** Solve again on this run's mesh with a new wind speed and/or thrust. */

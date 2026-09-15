@@ -63,3 +63,8 @@ export function formatTimestamp(epochSeconds: number): string {
     hour12: false,
   });
 }
+
+/** Short, stable label for a run id like "20260914-215705-ab50d5" -> "ab50d5". */
+export function shortRunId(id: string): string {
+  return id.split("-").pop() || id;
+}

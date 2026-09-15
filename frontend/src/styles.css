@@ -1881,3 +1881,22 @@ body {
   display: flex;
   gap: 8px;
 }
+
+/* Short run id in the sidebar, so runs with the same name can be told apart */
+.run-item-id {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* Inline run rename */
+.detail-rename {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.detail-rename input {
+  font-size: 18px;
+  min-width: 0;
+  flex: 1 1 260px;
+}

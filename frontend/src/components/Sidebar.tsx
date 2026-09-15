@@ -1,7 +1,7 @@
 import type { RunSummary } from "../api";
 import { StatusPill } from "./StatusPill";
 import { StorageFooter } from "./StorageFooter";
-import { formatCoeff, formatTimestamp } from "../lib/format";
+import { formatCoeff, formatTimestamp, shortRunId } from "../lib/format";
 
 interface Props {
   runs: RunSummary[] | null;
@@ -125,6 +125,9 @@ export function Sidebar({
                     {Math.round(r.progress * 100)}%
                   </span>
                 )}
+                <span className="run-item-id mono" title={`Run ID ${r.id}`}>
+                  #{shortRunId(r.id)}
+                </span>
                 <span className="run-item-date">{formatTimestamp(r.created_at)}</span>
               </div>
             </div>

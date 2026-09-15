@@ -456,3 +456,45 @@ Slipstream refinement zones keep the aim of the original speed/thrust.
 `GET /api/runs/{id}` gains `has_mesh`. Frontend: a finished run with a mesh shows
 **Re-solve…** (wind speed + thrust per prop form); re-solved runs link back to the run
 whose mesh they used.
+
+## v8.3: motor detection, run rename and short IDs, failed-run cleanup
+
+### Motor detection
+
+`POST /api/stl/props` (multipart `stl` + form `unit`, default `mm`) →
+`{props: [{center: [x,y,z], diameter}], motor_radius, reason}` in the STL's own units.
+`app/props.py` rasterizes the top-down footprint (400 cells on the long side), takes its
+distance transform, and treats the deepest peaks outside 45% of the max radius as motor
+pads (a round pad is about one motor radius deep; arms are half an arm width). Peaks at
+least 75% as deep as the deepest, with non-max suppression, must number 3–8, otherwise
+`props` is empty with a `reason` (cars, wings and spheres are declined). Disk z is the
+tallest surface within the pad plus 2% of model height; diameter is the largest common
+prop size (2–32 in) no bigger than 95% of the closest motor spacing, else 0.8 × spacing.
+Measured: the sample quad's motors at ±88.3 mm; a 5-inch frame within 0.3 mm of its CAD
+motor centers. New run calls it when prop disks are switched on (the corner layout shows
+instantly, then moves onto the motors) and from a "detect motors" chip.
+
+### Rename and short IDs
+
+`PATCH /api/runs/{id}` with `{"name": "..."}` (1–200 chars after trimming; any other key →
+422) updates the run's display name and returns the run detail. The sidebar and run header
+show the id's last segment (`#ab50d5`); the header has a Rename button.
+
+### Failed-run cleanup
+
+When a run ends `error` or `cancelled`, and for such runs at startup, the runner calls
+`foamcase.clean_failed_case`: it deletes `constant/polyMesh`, surface copies, `processor*`,
+`dynamicCode` and every time directory except `0`, keeping `log.*`, `system/`, `0/`,
+`postProcessing/` (the convergence chart) and the small `constant/*Properties`/`fvOptions`
+files. The state gains `mesh_freed: true` and `freed_bytes`. Re-run still works from the
+kept STL and config; re-solve is not offered (no mesh).
+
+### Symmetry check
+
+`geometry.symmetry_error_y` now queries a KD-tree over every vertex. Against a 20k-vertex
+subsample, a large mesh with big flat triangles scored ~0.018 (limit 0.02) even when exactly
+symmetric.
+
+### Trim weight
+
+New run no longer pre-fills the craft weight; a trim solve can't start until one is entered.

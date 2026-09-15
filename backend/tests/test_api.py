@@ -246,3 +246,54 @@ def test_resolve_needs_a_mesh_on_disk(finished_run, kwargs):
     assert client.get(f"/api/runs/{rid}").json()["has_mesh"] is False
     res = client.post(f"/api/runs/{rid}/resolve", json={"wind_speed": 20})
     assert res.status_code == 409 and "Re-run" in res.json()["detail"]
+
+
+# -- rename -------------------------------------------------------------------
+
+def test_rename_run(finished_run):
+    rid = finished_run()
+    res = client.patch(f"/api/runs/{rid}", json={"name": "  quad, props at 300 g  "})
+    assert res.status_code == 200, res.text
+    assert res.json()["name"] == "quad, props at 300 g"
+    assert client.get(f"/api/runs/{rid}").json()["name"] == "quad, props at 300 g"
+    assert any(r["name"] == "quad, props at 300 g" for r in client.get("/api/runs").json())
+
+
+@pytest.mark.parametrize("body", [{"name": ""}, {"name": "x" * 201}, {"name": 5},
+                                  {"name": "ok", "wind_speed": 20}, {}, [1]])
+def test_rename_validation(finished_run, body):
+    rid = finished_run()
+    assert client.patch(f"/api/runs/{rid}", json=body).status_code == 422
+    assert client.get(f"/api/runs/{rid}").json()["name"] == "quad"
+
+
+def test_rename_unknown_run_is_404():
+    assert client.patch("/api/runs/nope", json={"name": "x"}).status_code == 404
+
+
+# -- motor detection ------------------------------------------------------------
+
+QUAD_STL = Path(__file__).resolve().parents[2] / "examples" / "quad_frame.stl"
+
+
+def test_detect_props_endpoint_finds_quad_motors():
+    with open(QUAD_STL, "rb") as fh:
+        res = client.post("/api/stl/props", files={"stl": ("q.stl", fh, "model/stl")},
+                          data={"unit": "mm"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["reason"] is None and len(body["props"]) == 4
+
+
+def test_detect_props_endpoint_declines_a_sphere():
+    res = _post("/api/stl/props", SPHERE)
+    assert res.status_code == 200
+    assert res.json()["props"] == [] and res.json()["reason"]
+
+
+def test_detect_props_endpoint_validates_input():
+    with open(QUAD_STL, "rb") as fh:
+        assert client.post("/api/stl/props", files={"stl": ("q.stl", fh, "model/stl")},
+                           data={"unit": "furlong"}).status_code == 422
+    assert client.post("/api/stl/props", files={
+        "stl": ("x.stl", b"not an stl", "model/stl")}).status_code == 422

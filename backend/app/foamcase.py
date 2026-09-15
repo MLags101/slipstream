@@ -386,6 +386,43 @@ def free_processor_dirs(case_dir: str | Path) -> int:
     return freed
 
 
+_KEEP_IN_CONSTANT = ("transportProperties", "turbulenceProperties", "fvOptions")
+
+
+def clean_failed_case(case_dir: str | Path) -> int:
+    """Free the heavy part of a failed or cancelled run's case: the mesh,
+    surface copies, per-processor decomposition and solved time directories.
+    Logs, system/ dictionaries, 0/ and postProcessing/ (the convergence
+    history) are kept, so the failure can still be read and charted. Returns
+    bytes freed."""
+    case = Path(case_dir)
+    if not case.is_dir():
+        return 0
+    doomed = [p for p in case.iterdir() if p.is_dir() and (
+        p.name.startswith("processor") or p.name == "dynamicCode"
+        or (_is_time_dir(p.name) and p.name != "0"))]
+    constant = case / "constant"
+    if constant.is_dir():
+        doomed += [p for p in constant.iterdir() if p.name not in _KEEP_IN_CONSTANT]
+    freed = 0
+    for p in doomed:
+        if p.is_dir():
+            freed += _dir_bytes(p)
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            freed += p.stat().st_size
+            p.unlink(missing_ok=True)
+    return freed
+
+
+def _is_time_dir(name: str) -> bool:
+    try:
+        float(name)
+    except ValueError:
+        return False
+    return True
+
+
 def compact_case(run_dir: str | Path) -> int:
     """Aggressively reclaim a finished run: delete the whole OpenFOAM case/
     (mesh + solved fields) but keep the cached viz JSON, config, state and the
