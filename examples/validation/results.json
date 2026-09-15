@@ -1,0 +1,296 @@
+{
+ "sphere": {
+  "config": {
+   "name": "Validation: sphere, Re 1e5",
+   "unit": "mm",
+   "wind_speed": 15,
+   "quality": "coarse",
+   "symmetry": true,
+   "mesh_sweep": {
+    "tol_pct": 2
+   }
+  },
+  "reference": {
+   "cd": 0.47,
+   "source": "Achenbach (1972), J. Fluid Mech. 54; subcritical sphere drag at Re = 1e5"
+  },
+  "mesh": {
+   "status": "not_independent",
+   "independent_at": null,
+   "best_cd": 0.31906148318309857,
+   "tol_pct": 2.0,
+   "steps": 3,
+   "history": [
+    {
+     "quality": "coarse",
+     "mesh_cells": 162726,
+     "cd": 0.29014918935999995,
+     "drag_N": 0.3139675031500736,
+     "converged": true,
+     "change_pct": null
+    },
+    {
+     "quality": "medium",
+     "mesh_cells": 386189,
+     "cd": 0.30079694122033895,
+     "drag_N": 0.3254893277435738,
+     "converged": true,
+     "change_pct": 3.5398471198346875
+    },
+    {
+     "quality": "fine",
+     "mesh_cells": 1265339,
+     "cd": 0.31906148318309857,
+     "drag_N": 0.3452532038683917,
+     "converged": true,
+     "change_pct": 5.724458427430495
+    }
+   ],
+   "error": null
+  },
+  "members": [
+   {
+    "id": "20260915-114748-710c32",
+    "quality": "coarse",
+    "status": "done",
+    "mesh_cells": 162726,
+    "cd": 0.29014918935999995,
+    "cl": 0.0448949063428,
+    "drag_N": 0.3139675031500736,
+    "converged": true,
+    "iterations": 250,
+    "reynolds": 100000.0,
+    "runtime_s": 62.6,
+    "frontal_area_m2": 0.0078518993973587,
+    "cd_std_last20pct": 0.008239488803862112,
+    "drag_pressure_N": 0.29627067032000004,
+    "drag_viscous_N": 0.017696833000000002,
+    "error": null
+   },
+   {
+    "id": "20260915-114853-640300",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 386189,
+    "cd": 0.30079694122033895,
+    "cl": 0.09119148874237287,
+    "drag_N": 0.3254893277435738,
+    "converged": true,
+    "iterations": 296,
+    "reynolds": 100000.0,
+    "runtime_s": 153.8,
+    "frontal_area_m2": 0.0078518993973587,
+    "cd_std_last20pct": 0.003558250063435706,
+    "drag_pressure_N": 0.3077282042033898,
+    "drag_viscous_N": 0.017761123636610168,
+    "error": null
+   },
+   {
+    "id": "20260915-115129-b77663",
+    "quality": "fine",
+    "status": "done",
+    "mesh_cells": 1265339,
+    "cd": 0.31906148318309857,
+    "cl": -0.16914469888732392,
+    "drag_N": 0.3452532038683917,
+    "converged": true,
+    "iterations": 357,
+    "reynolds": 100000.0,
+    "runtime_s": 529.7,
+    "frontal_area_m2": 0.0078518993973587,
+    "cd_std_last20pct": 0.0061385054877513105,
+    "drag_pressure_N": 0.3331985581971831,
+    "drag_viscous_N": 0.012054645614929577,
+    "error": null
+   }
+  ]
+ },
+ "ahmed_25": {
+  "config": {
+   "name": "Validation: Ahmed body 25\u00b0, 60 m/s",
+   "unit": "mm",
+   "wind_speed": 60,
+   "quality": "coarse",
+   "symmetry": true,
+   "ground_plane": true,
+   "ground": "static",
+   "mesh_sweep": {
+    "tol_pct": 2
+   }
+  },
+  "reference": {
+   "cd": 0.285,
+   "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; 25\u00b0 slant at 60 m/s"
+  },
+  "mesh": {
+   "status": "independent",
+   "independent_at": "medium",
+   "best_cd": 0.31053254046153844,
+   "tol_pct": 2.0,
+   "steps": 3,
+   "history": [
+    {
+     "quality": "coarse",
+     "mesh_cells": 83537,
+     "cd": 0.3277145634375,
+     "drag_N": 80.95493395832844,
+     "converged": true,
+     "change_pct": null
+    },
+    {
+     "quality": "medium",
+     "mesh_cells": 212751,
+     "cd": 0.3062950627142857,
+     "drag_N": 75.66370048893494,
+     "converged": true,
+     "change_pct": 6.993093696451311
+    },
+    {
+     "quality": "fine",
+     "mesh_cells": 695098,
+     "cd": 0.31053254046153844,
+     "drag_N": 76.71047951389015,
+     "converged": true,
+     "change_pct": 1.364584124083959
+    }
+   ],
+   "error": null
+  },
+  "members": [
+   {
+    "id": "20260915-120041-516748",
+    "quality": "coarse",
+    "status": "done",
+    "mesh_cells": 83537,
+    "cd": 0.3277145634375,
+    "cl": 0.5421575762499999,
+    "drag_N": 80.95493395832844,
+    "converged": true,
+    "iterations": 162,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 44.0,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.001983866121315981,
+    "drag_pressure_N": 72.28272023125,
+    "drag_viscous_N": 8.672213857500001,
+    "error": null
+   },
+   {
+    "id": "20260915-120126-d21146",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 212751,
+    "cd": 0.3062950627142857,
+    "cl": 0.45253798980952387,
+    "drag_N": 75.66370048893494,
+    "converged": true,
+    "iterations": 212,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 93.4,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.0036916337524256658,
+    "drag_pressure_N": 65.98612981428572,
+    "drag_viscous_N": 9.677570763809522,
+    "error": null
+   },
+   {
+    "id": "20260915-120301-665bdc",
+    "quality": "fine",
+    "status": "done",
+    "mesh_cells": 695098,
+    "cd": 0.31053254046153844,
+    "cl": 0.5424049847076923,
+    "drag_N": 76.71047951389015,
+    "converged": true,
+    "iterations": 323,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 264.6,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.001645955648663073,
+    "drag_pressure_N": 66.55044207384614,
+    "drag_viscous_N": 10.160037496307693,
+    "error": null
+   }
+  ]
+ },
+ "sphere_transcritical": {
+  "config": {
+   "name": "Validation: 1 m sphere, Re 4e6",
+   "unit": "cm",
+   "wind_speed": 60,
+   "quality": "coarse",
+   "symmetry": true,
+   "mesh_sweep": {
+    "tol_pct": 2
+   }
+  },
+  "reference": {
+   "cd": 0.18,
+   "source": "Achenbach (1972), J. Fluid Mech. 54; transcritical sphere drag, Re = 4e6"
+  },
+  "mesh": {
+   "status": "independent",
+   "independent_at": "coarse",
+   "best_cd": 0.2608265410746268,
+   "tol_pct": 2.0,
+   "steps": 2,
+   "history": [
+    {
+     "quality": "coarse",
+     "mesh_cells": 152981,
+     "cd": 0.25721725184,
+     "drag_N": 445.33148259726147,
+     "converged": false,
+     "change_pct": null
+    },
+    {
+     "quality": "medium",
+     "mesh_cells": 371979,
+     "cd": 0.2608265410746268,
+     "drag_N": 451.580402972861,
+     "converged": true,
+     "change_pct": 1.383789095908823
+    }
+   ],
+   "error": null
+  },
+  "members": [
+   {
+    "id": "20260915-120224-5747b6",
+    "quality": "coarse",
+    "status": "done",
+    "mesh_cells": 152981,
+    "cd": 0.25721725184,
+    "cl": 0.186106908348,
+    "drag_N": 445.33148259726147,
+    "converged": false,
+    "iterations": 250,
+    "reynolds": 4000000.0,
+    "runtime_s": 57.6,
+    "frontal_area_m2": 0.7851899114690895,
+    "cd_std_last20pct": 0.014893355457290003,
+    "drag_pressure_N": 428.7814326,
+    "drag_viscous_N": 16.550048982,
+    "error": null
+   },
+   {
+    "id": "20260915-120401-27c3b4",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 371979,
+    "cd": 0.2608265410746268,
+    "cl": 0.20158803654626867,
+    "drag_N": 451.580402972861,
+    "converged": true,
+    "iterations": 336,
+    "reynolds": 4000000.0,
+    "runtime_s": 160.8,
+    "frontal_area_m2": 0.7851899114690895,
+    "cd_std_last20pct": 0.004146847879288548,
+    "drag_pressure_N": 432.97191286567164,
+    "drag_viscous_N": 18.60848913283582,
+    "error": null
+   }
+  ]
+ }
+}
