@@ -392,3 +392,31 @@ restart).
 Frontend: New run has a "Mesh independence" checkbox with a tolerance input (disables the
 quality select, sweeps and trim). The group panel shows the status strip, Cd and drag vs
 mesh cells (millions), and a table with cells, Cd, drag and Cd change per step.
+
+## v8.1: optional mesh refinement
+
+`POST /api/runs` config gains `"refinement": {"long_wake": true, "prop_slipstream": true}`
+(both optional booleans; unknown keys or non-booleans → 422; `prop_slipstream` without
+`props` → 422). False flags are dropped, and an empty object is removed from the stored
+config. It passes through unchanged to sweep, trim and mesh-sweep members. Defaults
+(no `refinement`) mesh exactly as before.
+
+- `long_wake`: the level-2 refinement box ends 4L behind the model instead of 1.5L, and a
+  level-1 `wakeBox` (the model bbox ±1L in Y/Z, 0.5L wider per side than the level-2
+  box) continues to 8L behind it. Both are clamped one base cell
+  inside the outlet.
+- `prop_slipstream`: one snappyHexMesh `cylinder` refinement region per prop disk, radius
+  0.6D, from 0.5D upstream of the disk to 3D downstream. The direction is the far-wake
+  slipstream `U∞·x̂ − 2·vᵢ·axis`, with vᵢ from momentum theory
+  (`vᵢ·sqrt(U∞² + vᵢ²) = T / (2ρA)`), so it points along −axis in hover and sweeps back
+  in fast forward flight. The level is the octree level whose cell size is nearest
+  D/16 (coarse), D/24 (medium) or D/32 (fine), clamped to [1, surface max level].
+  Cell caps (`maxGlobalCells`) still apply.
+
+`GET /api/runs/{id}` gains `refinement` (null unless requested): `{long_wake:
+{level2_end_m, level1_end_m} | null, slipstreams: [{level, cell_mm, direction}]}`,
+recorded when the case is generated.
+
+Frontend: New run has an "Extra mesh refinement" group with the two checkboxes (the
+slipstream box needs prop disks). The run header appends e.g.
+`· long wake · slipstreams (4 zones, 3.8 mm cells)`.

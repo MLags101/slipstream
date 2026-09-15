@@ -41,8 +41,119 @@ def domain_bounds(model: dict, ground: bool = False,
     return [[dx0, dy0, floor], [dx1, hy, hz]]
 
 
-def compute_params(model: dict, config: dict) -> dict:
-    """Derive all template placeholder values from model metadata + run config."""
+REFINEMENT_OPTIONS = ("long_wake", "prop_slipstream")
+
+# Long wake: the level-2 box reaches this many body lengths behind the model
+# (default 1.5L), followed by a level-1 box out to LONG_WAKE_L1_L.
+LONG_WAKE_L2_L = 4.0
+LONG_WAKE_L1_L = 8.0
+
+# Prop slipstream cylinders: target cells across the prop diameter per quality,
+# snapped to the nearest octree level. Length/radius in prop diameters.
+SLIPSTREAM_CELLS_ACROSS = {"coarse": 16, "medium": 24, "fine": 32}
+SLIPSTREAM_UPSTREAM_D = 0.5
+SLIPSTREAM_DOWNSTREAM_D = 3.0
+SLIPSTREAM_RADIUS_D = 0.6
+
+
+def induced_velocity(thrust_N: float, rho: float, area_m2: float,
+                     u_inf: float) -> float:
+    """Momentum-theory induced velocity at the disk, v * sqrt(U^2 + v^2) =
+    T / (2 rho A) (Glauert), solved by bisection. Only used to aim the
+    slipstream refinement, so the flow-angle approximation is fine."""
+    rhs = max(thrust_N, 0.0) / (2.0 * rho * area_m2)
+    if rhs <= 0.0:
+        return 0.0
+    lo, hi = 0.0, math.sqrt(rhs) + 1.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if mid * math.sqrt(u_inf * u_inf + mid * mid) < rhs:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def slipstream_regions(props_m: list[dict], u_inf: float, rho: float,
+                       base_cell: float, quality: str,
+                       surf_max: int) -> list[dict]:
+    """One refinement cylinder per prop disk, aimed along the far-wake
+    slipstream: the freestream (+X) plus twice the induced velocity pushed
+    opposite the thrust axis. It starts SLIPSTREAM_UPSTREAM_D diameters
+    upstream of the disk (inflow) and runs SLIPSTREAM_DOWNSTREAM_D behind."""
+    regions = []
+    for p in props_m:
+        d = p["diameter_m"]
+        area = math.pi * d * d / 4.0
+        vi = induced_velocity(p["thrust_N"], rho, area, u_inf)
+        ax, ay, az = p["axis"]
+        sx, sy, sz = u_inf - 2.0 * vi * ax, -2.0 * vi * ay, -2.0 * vi * az
+        n = math.sqrt(sx * sx + sy * sy + sz * sz)
+        if n < 1e-9:  # no wind, no thrust: just cover the disk's own wake
+            sx, sy, sz, n = -ax, -ay, -az, 1.0
+        sx, sy, sz = sx / n, sy / n, sz / n
+        cx, cy, cz = p["center_m"]
+        up, down = SLIPSTREAM_UPSTREAM_D * d, SLIPSTREAM_DOWNSTREAM_D * d
+        target = d / SLIPSTREAM_CELLS_ACROSS[quality]
+        level = int(math.floor(math.log2(base_cell / target) + 0.5))
+        level = max(1, min(level, surf_max))
+        regions.append({
+            "point1": [cx - sx * up, cy - sy * up, cz - sz * up],
+            "point2": [cx + sx * down, cy + sy * down, cz + sz * down],
+            "radius": SLIPSTREAM_RADIUS_D * d,
+            "level": level,
+            "cell_m": base_cell / 2 ** level,
+            "direction": [sx, sy, sz],
+        })
+    return regions
+
+
+def _vec(v) -> str:
+    return "(" + " ".join(fmt(x) for x in v) + ")"
+
+
+def _refinement_dicts(boxes: list[tuple[str, list, list, int]],
+                      cylinders: list[dict]) -> tuple[str, str]:
+    """snappyHexMeshDict fragments for extra refinement shapes: (geometry
+    entries, refinementRegions entries)."""
+    geom, regions = [], []
+    for name, lo, hi, level in boxes:
+        geom.append(f"""
+    {name}
+    {{
+        type box;
+        min  {_vec(lo)};
+        max  {_vec(hi)};
+    }}""")
+        regions.append(f"""
+        {name}
+        {{
+            mode inside;
+            levels ((1E15 {level}));
+        }}""")
+    for i, c in enumerate(cylinders, start=1):
+        geom.append(f"""
+    slipstream{i}
+    {{
+        type   cylinder;
+        point1 {_vec(c["point1"])};
+        point2 {_vec(c["point2"])};
+        radius {fmt(c["radius"])};
+    }}""")
+        regions.append(f"""
+        slipstream{i}
+        {{
+            mode inside;
+            levels ((1E15 {c["level"]}));
+        }}""")
+    return "".join(geom), "".join(regions)
+
+
+def compute_params(model: dict, config: dict,
+                   props_m: list[dict] | None = None) -> dict:
+    """Derive all template placeholder values from model metadata + run config.
+    `props_m` (geometry.transform_props output) is only needed for the
+    prop-slipstream refinement option."""
     bbox = model["bbox_m"]
     (bx0, by0, bz0), (bx1, by1, bz1) = bbox
     L = bx1 - bx0
@@ -71,10 +182,29 @@ def compute_params(model: dict, config: dict) -> dict:
     ny = max(6, int(math.ceil((dy1 - dy0) / cell)))
     nz = max(6, int(math.ceil((dz1 - dz0) / cell)))
 
+    refinement = config.get("refinement") or {}
+    long_wake = bool(refinement.get("long_wake"))
+
     # Refinement box: 0.5L around the model, 1L extra downstream (wake).
+    # Long wake: carry the level-2 box further back, then a wider level-1 box.
+    x_end = dx1 - cell
     rbx0, rbx1 = bx0 - 0.5 * L, bx1 + 1.5 * L
+    if long_wake:
+        rbx1 = min(bx1 + LONG_WAKE_L2_L * L, x_end)
     rby0, rby1 = by0 - 0.5 * L, by1 + 0.5 * L
     rbz0, rbz1 = bz0 - 0.5 * L, bz1 + 0.5 * L
+
+    boxes = []
+    if long_wake and bx1 + LONG_WAKE_L1_L * L > rbx1:
+        boxes.append(("wakeBox",
+                      [rbx1 - cell, by0 - L, bz0 - L],
+                      [min(bx1 + LONG_WAKE_L1_L * L, x_end), by1 + L, bz1 + L],
+                      1))
+    cylinders = []
+    if refinement.get("prop_slipstream") and props_m:
+        cylinders = slipstream_regions(
+            props_m, U0, rho, cell, config["quality"], q["surf_max"])
+    extra_geometry, extra_regions = _refinement_dicts(boxes, cylinders)
 
     # Point near inlet corner, guaranteed outside the model & refinement box.
     # With symmetry, dy0 == 0, so liy = 0.677*cell is a positive point just
@@ -119,9 +249,19 @@ def compute_params(model: dict, config: dict) -> dict:
         "maxGlobalCells": str(q["max_global_cells"]),
         "nprocs": str(NPROCS),
         "doLayers": "true",
+        "extraGeometry": extra_geometry,
+        "extraRegions": extra_regions,
         # convenience for the runner (non-string: not template keys)
         "iterations": q["iterations"],
         "base_cell": cell,
+        "refinement_info": {
+            "long_wake": ({"level2_end_m": rbx1,
+                           "level1_end_m": boxes[0][2][0] if boxes else rbx1}
+                          if long_wake else None),
+            "slipstreams": [
+                {"level": c["level"], "cell_mm": c["cell_m"] * 1000.0,
+                 "direction": c["direction"]} for c in cylinders],
+        },
     }
 
 

@@ -215,6 +215,23 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         if not props:
             cfg.pop("props")
 
+    refinement = cfg.get("refinement")
+    if refinement is not None:
+        if (not isinstance(refinement, dict)
+                or set(refinement) - set(foamcase.REFINEMENT_OPTIONS)
+                or not all(isinstance(v, bool) for v in refinement.values())):
+            raise HTTPException(
+                422, "refinement must be an object of true/false flags: "
+                     + ", ".join(foamcase.REFINEMENT_OPTIONS))
+        if refinement.get("prop_slipstream") and not cfg.get("props"):
+            raise HTTPException(
+                422, "refinement.prop_slipstream requires propeller disks (props)")
+        refinement = {k: True for k, v in refinement.items() if v}
+        if refinement:
+            cfg["refinement"] = refinement
+        else:
+            cfg.pop("refinement")
+
     sweeps = {p: cfg.pop(f"{p}_sweep", None) for p in ("yaw", "pitch")}
     sweeps = {p: v for p, v in sweeps.items() if v is not None}
     if len(sweeps) > 1:
@@ -402,6 +419,7 @@ def get_run(run_id: str):
         "group_id": s.get("group_id"),
         "model": model, "mesh_cells": s["mesh_cells"],
         "props_m": props_m,
+        "refinement": s.get("refinement"),
         "result": _compat_result(s["result"]), "error": s["error"],
     }
 

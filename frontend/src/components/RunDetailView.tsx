@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type History, type LogTail, type RunDetail } from "../api";
 import { usePoll } from "../hooks/usePoll";
+import { refinementLabel } from "../lib/refinementText";
 import { isTerminal } from "./StatusPill";
 import { StatusPill } from "./StatusPill";
 import { Stepper } from "./Stepper";
@@ -118,6 +119,7 @@ export function RunDetailView({
         </div>
         <div className="detail-meta mono">
           {run.config.wind_speed} m/s · yaw {run.config.yaw_deg}° · {run.config.quality}
+          {refinementLabel(run.config.refinement, run.refinement)}
           {run.model && ` · ${run.model.triangles.toLocaleString("en-US")} tris`}
         </div>
         <div className="detail-actions">

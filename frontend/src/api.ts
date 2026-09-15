@@ -70,6 +70,24 @@ export interface RunConfig {
    * per member. Mutually exclusive with sweeps and trim.
    */
   mesh_sweep?: { tol_pct?: number };
+  /**
+   * v8.1: optional extra mesh refinement. `long_wake` carries the wake
+   * refinement 4 body lengths back (plus a coarser zone to 8L);
+   * `prop_slipstream` adds a refined cylinder along each prop's slipstream
+   * (requires `props`).
+   */
+  refinement?: RefinementOptions;
+}
+
+export interface RefinementOptions {
+  long_wake?: boolean;
+  prop_slipstream?: boolean;
+}
+
+/** What the backend actually meshed for `config.refinement`. */
+export interface RefinementInfo {
+  long_wake: { level2_end_m: number; level1_end_m: number } | null;
+  slipstreams: { level: number; cell_mm: number; direction: [number, number, number] }[];
 }
 
 export interface PropSpec {
@@ -214,6 +232,8 @@ export interface RunDetail {
   model: ModelInfo | null;
   /** Prop disks transformed into the viz frame; null when the run has none. */
   props_m?: PropDiskM[] | null;
+  /** v8.1: refinement actually meshed (null when none was requested). */
+  refinement?: RefinementInfo | null;
   mesh_cells: number | null;
   result: RunResult | null;
   error: string | null;

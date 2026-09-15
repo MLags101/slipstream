@@ -101,3 +101,44 @@ def test_mesh_sweep_validation(monkeypatch, extra, fragment):
                           data={"config": _json.dumps(cfg)})
     assert res.status_code == 422, res.text
     assert fragment in res.json()["detail"]
+
+
+def _post_run(cfg: dict):
+    import json as _json
+    with open(SPHERE, "rb") as fh:
+        return client.post("/api/runs", files={"stl": ("s.stl", fh, "model/stl")},
+                           data={"config": _json.dumps(cfg)})
+
+
+PROPS = [{"center": [0, 0, 0], "diameter": 127, "thrust_g": 200}]
+
+
+@pytest.mark.parametrize("extra, fragment", [
+    ({"refinement": "long"}, "refinement must be an object"),
+    ({"refinement": {"wake": True}}, "refinement must be an object"),
+    ({"refinement": {"long_wake": 1}}, "refinement must be an object"),
+    ({"refinement": {"prop_slipstream": True}}, "requires propeller disks"),
+])
+def test_refinement_validation(monkeypatch, extra, fragment):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse", **extra})
+    assert res.status_code == 422, res.text
+    assert fragment in res.json()["detail"]
+
+
+@pytest.mark.parametrize("refinement, stored", [
+    ({"long_wake": True, "prop_slipstream": True},
+     {"long_wake": True, "prop_slipstream": True}),
+    ({"long_wake": True, "prop_slipstream": False}, {"long_wake": True}),
+    ({"long_wake": False}, None),
+])
+def test_refinement_is_normalized_into_run_config(monkeypatch, refinement, stored):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    submitted = []
+    # Capture the config instead of queuing a real OpenFOAM run.
+    monkeypatch.setattr(main, "_submit_run",
+                        lambda data, cfg: submitted.append(cfg) or "fake-id")
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse",
+                     "props": PROPS, "refinement": refinement})
+    assert res.status_code == 201, res.text
+    assert submitted[0].get("refinement") == stored

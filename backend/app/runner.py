@@ -330,10 +330,18 @@ class Runner:
                             "without symmetry."))
             return
 
-        params = foamcase.compute_params(model, config)
+        props_cfg = config.get("props") or []
+        props = geometry.transform_props(
+            props_cfg, config["unit"], float(config.get("yaw_deg") or 0),
+            float(config.get("pitch_deg") or 0), model,
+            roll_deg=float(config.get("roll_deg") or 0)) if props_cfg else []
+
+        params = foamcase.compute_params(model, config, props_m=props)
         iterations = params.pop("iterations")
+        refinement_info = params.pop("refinement_info")
 
         self.update(run_id, model=model, progress=0.06,
+                    refinement=refinement_info if config.get("refinement") else None,
                     message="Generating OpenFOAM case")
         foamcase.generate_case(case, params)
         if config.get("ground_plane"):
@@ -372,14 +380,9 @@ class Runner:
                     message=f"Mesh ready ({mesh_cells or '?'} cells)")
 
         # ---- propeller actuator disks (optional) ---------------------------
-        props_cfg = config.get("props") or []
-        if props_cfg:
+        if props:
             self.update(run_id, message=f"Marking {len(props_cfg)} propeller "
                                         "disk zones")
-            props = geometry.transform_props(
-                props_cfg, config["unit"], float(config.get("yaw_deg") or 0),
-                float(config.get("pitch_deg") or 0), model,
-                roll_deg=float(config.get("roll_deg") or 0))
             foamcase.write_prop_disks(case, props,
                                       float(config.get("rho") or 1.225),
                                       params["base_cell"])

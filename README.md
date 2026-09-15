@@ -25,6 +25,10 @@ no meshing tutorials, no cloud fees.
   aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
   that finds the forward-flight attitude and per-motor thrust for weight and speed
 - Runs **auto-stop when converged**, saving 30–40% of solve time
+- **Mesh-independence sweep**: reruns coarse → medium → fine until drag stops
+  changing, so you know the answer isn't an artifact of cell size
+- **Optional refinement where it matters**: a longer refined wake, and refined
+  cylinders along each prop's slipstream, tilted by the wind speed and thrust
 - **One-click model repair**: broken CAD exports (holes, overlapping parts, loose
   sheets) are rebuilt as one closed solid and checked against the original
 - **Half-model symmetry solves** for mirror-symmetric shapes, and a rolling-road

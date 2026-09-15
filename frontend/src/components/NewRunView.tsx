@@ -74,6 +74,11 @@ export function NewRunView({ onCreated }: Props) {
   const [refArea, setRefArea] = useState(""); // cm², blank = auto (frontal)
   const [groundPlane, setGroundPlane] = useState(false);
   const [symmetry, setSymmetry] = useState(false);
+  // Optional extra mesh refinement (off by default: more cells, longer runs).
+  const [longWake, setLongWake] = useState(false);
+  const [propSlipstream, setPropSlipstream] = useState(false);
+  // Slipstream refinement follows the prop disks, so it needs them on.
+  const slipstreamOn = propsEnabled && propSlipstream;
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -684,6 +689,14 @@ export function NewRunView({ onCreated }: Props) {
       ...(roll ? { roll_deg: roll } : {}),
       ...(groundPlane ? { ground_plane: true } : {}),
       ...(symmetry ? { symmetry: true } : {}),
+      ...(longWake || slipstreamOn
+        ? {
+            refinement: {
+              ...(longWake ? { long_wake: true } : {}),
+              ...(slipstreamOn ? { prop_slipstream: true } : {}),
+            },
+          }
+        : {}),
     };
     setSubmitting(true);
     setSubmitError(null);
@@ -1240,6 +1253,36 @@ export function NewRunView({ onCreated }: Props) {
               </span>
             )}
           </label>
+          <div className="field">
+            <span className="field-label">Extra mesh refinement — optional</span>
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={longWake}
+                onChange={(e) => setLongWake(e.target.checked)}
+                disabled={!file}
+              />
+              <span>Longer wake — refine 4 body lengths behind the model</span>
+            </label>
+            <label className="check-field">
+              <input
+                type="checkbox"
+                checked={slipstreamOn}
+                onChange={(e) => setPropSlipstream(e.target.checked)}
+                disabled={!file || !propsEnabled}
+              />
+              <span>Prop slipstreams — refine the flow through each prop disk</span>
+              {file && !propsEnabled && (
+                <span className="config-note">needs propeller disks</span>
+              )}
+            </label>
+            {(longWake || slipstreamOn) && (
+              <span className="config-note">
+                more cells and a longer run; the slipstream zones tilt with the
+                wind speed and thrust
+              </span>
+            )}
+          </div>
           <label className="field">
             <span className="field-label">Mesh quality</span>
             <select
