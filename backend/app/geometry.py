@@ -78,8 +78,12 @@ def symmetry_error_y(mesh) -> float:
     symmetric about its centerline has vertices in exact ±Y pairs, so each
     Y-mirrored vertex sits right on top of an original one (distance ~0). We
     report the 90th-percentile nearest-neighbour distance / W, so a missing or
-    shifted side (whose mirror lands in empty space) scores high. numpy-only,
-    no rtree/scipy. inf for a degenerate (zero-width) model."""
+    shifted side (whose mirror lands in empty space) scores high. The search is
+    against *every* vertex (KD-tree): against a subsample, a large mesh with big
+    flat triangles scored ~0.02 even when exactly symmetric. inf for a
+    degenerate (zero-width) model."""
+    from scipy.spatial import cKDTree
+
     lo, hi = mesh.bounds
     W = float(hi[1] - lo[1])
     if W <= 0:
@@ -87,16 +91,8 @@ def symmetry_error_y(mesh) -> float:
     V = np.asarray(mesh.vertices, dtype=np.float64)
     if len(V) == 0:
         return float("inf")
-    # Reference set (cap huge meshes; density stays high enough for ~0 on a
-    # symmetric body). Query = a Y-mirrored subsample.
-    ref = V if len(V) <= 20000 else V[np.random.default_rng(0).choice(len(V), 20000, replace=False)]
-    q = V if len(V) <= 3000 else V[np.random.default_rng(1).choice(len(V), 3000, replace=False)]
-    q = q * np.array([1.0, -1.0, 1.0])
-    dmin = np.empty(len(q))
-    for i in range(0, len(q), 256):
-        chunk = q[i:i + 256]
-        d2 = ((chunk[:, None, :] - ref[None, :, :]) ** 2).sum(axis=2)
-        dmin[i:i + len(chunk)] = np.sqrt(d2.min(axis=1))
+    q = V if len(V) <= 20000 else V[np.random.default_rng(1).choice(len(V), 20000, replace=False)]
+    dmin, _ = cKDTree(V).query(q * np.array([1.0, -1.0, 1.0]))
     return float(np.percentile(dmin, 90) / W)
 
 
