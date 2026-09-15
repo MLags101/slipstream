@@ -131,6 +131,8 @@ coarse analysis against a backend on `:8000` and does.
 
 - CFD accuracy depends on mesh resolution: **coarse** answers "is A better than B",
   **fine** answers "what's the number". Trust trends more than the third decimal.
+- How close it gets to real wind tunnel data, and where it doesn't, is measured in
+  [docs/VALIDATION.md](docs/VALIDATION.md) (sphere and Ahmed body).
 - Runs are CPU-hungry by design — a coarse run uses ~6 cores for a few minutes.
 - Run data lives in `~/.windtunnel` (OpenFOAM can't handle spaces in paths, so not
   `~/Library/Application Support`).

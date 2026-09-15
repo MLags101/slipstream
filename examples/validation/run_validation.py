@@ -98,7 +98,6 @@ def main() -> None:
     args = ap.parse_args()
 
     out_path = HERE / "results.json"
-    results = json.loads(out_path.read_text()) if out_path.exists() else {}
     for case in CASES:
         if args.only and case["name"] != args.only:
             continue
@@ -117,9 +116,14 @@ def main() -> None:
                 "converged": res.get("converged"), "iterations": res.get("iterations"),
                 "reynolds": res.get("reynolds"), "runtime_s": res.get("runtime_s"),
                 "frontal_area_m2": res.get("frontal_area_m2"),
-                "cd_pressure": res.get("cd_pressure"), "cd_viscous": res.get("cd_viscous"),
+                "cd_std_last20pct": res.get("cd_std_last20pct"),
+                "drag_pressure_N": res.get("drag_pressure_N"),
+                "drag_viscous_N": res.get("drag_viscous_N"),
                 "error": detail.get("error"),
             })
+        # Re-read before writing: another invocation (e.g. --only) may have
+        # saved its case while this one was waiting.
+        results = json.loads(out_path.read_text()) if out_path.exists() else {}
         results[case["name"]] = {"config": case["config"], "reference": case["reference"],
                                  "mesh": group["mesh"], "members": members}
         out_path.write_text(json.dumps(results, indent=1))
