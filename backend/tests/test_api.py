@@ -142,3 +142,107 @@ def test_refinement_is_normalized_into_run_config(monkeypatch, refinement, store
                      "props": PROPS, "refinement": refinement})
     assert res.status_code == 201, res.text
     assert submitted[0].get("refinement") == stored
+
+
+# -- re-solve on an existing mesh ---------------------------------------------
+
+QUAD_CFG = {"name": "quad", "unit": "mm", "wind_speed": 15, "quality": "coarse",
+            "props": PROPS * 4, "sweep_param": "yaw"}
+
+
+@pytest.fixture
+def finished_run(monkeypatch):
+    """A done run with a mesh on disk, plus a captured (never queued) submit."""
+    import json as _json
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    submitted = []
+    monkeypatch.setattr(main, "_submit_run",
+                        lambda data, cfg, group_id=None: submitted.append(cfg) or "child")
+    made = []
+
+    def make(cfg=QUAD_CFG, mesh=True, **state):
+        import uuid as _uuid
+        rid = f"20260101-000000-{_uuid.uuid4().hex[:6]}"
+        rd = main.DATA_DIR / rid
+        poly = rd / "case" / "constant" / "polyMesh"
+        poly.mkdir(parents=True)
+        if mesh:
+            (poly / "owner").write_text("mesh")
+        (rd / "model.stl").write_bytes(SPHERE.read_bytes())
+        (rd / "config.json").write_text(_json.dumps(cfg))
+        main.runner.states[rid] = {
+            "id": rid, "name": cfg["name"], "status": "done", "progress": 1.0,
+            "message": "", "created_at": 0.0, "config": cfg, "group_id": None,
+            "model": None, "mesh_cells": 1000, "result": None, "error": None,
+            "log": None, **state}
+        made.append(rid)
+        return rid
+
+    make.submitted = submitted
+    yield make
+    for rid in made:
+        main.runner.states.pop(rid, None)
+
+
+def test_resolve_inherits_mesh_inputs_and_applies_new_speed_and_thrust(finished_run):
+    rid = finished_run()
+    assert client.get(f"/api/runs/{rid}").json()["has_mesh"] is True
+    res = client.post(f"/api/runs/{rid}/resolve", json={"wind_speed": 25, "thrust_g": 250})
+    assert res.status_code == 201, res.text
+    cfg, = finished_run.submitted
+    assert cfg["mesh_from"] == rid
+    assert cfg["wind_speed"] == 25.0
+    assert [p["thrust_g"] for p in cfg["props"]] == [250.0] * 4
+    assert cfg["name"] == "quad @ 25 m/s re-solve"
+    assert cfg["quality"] == "coarse" and "sweep_param" not in cfg
+
+
+def test_resolve_per_prop_thrust_and_custom_name(finished_run):
+    rid = finished_run()
+    res = client.post(f"/api/runs/{rid}/resolve",
+                      json={"thrust_g": [100, 200, 300, 400], "name": " hover check "})
+    assert res.status_code == 201, res.text
+    cfg, = finished_run.submitted
+    assert [p["thrust_g"] for p in cfg["props"]] == [100.0, 200.0, 300.0, 400.0]
+    assert cfg["wind_speed"] == 15.0 and cfg["name"] == "hover check"
+
+
+def test_resolve_of_a_resolve_keeps_the_base_name(finished_run):
+    child_cfg = dict(QUAD_CFG, name="quad @ 25 m/s re-solve", resolve_base_name="quad")
+    rid = finished_run(child_cfg)
+    assert client.post(f"/api/runs/{rid}/resolve", json={"wind_speed": 10}).status_code == 201
+    assert finished_run.submitted[0]["name"] == "quad @ 10 m/s re-solve"
+
+
+@pytest.mark.parametrize("body, fragment", [
+    ({"yaw_deg": 15}, "only wind_speed, thrust_g and name"),
+    ({"wind_speed": 0}, "wind_speed must be"),
+    ({"thrust_g": [100, 200]}, "list of 4"),
+    ({"thrust_g": -1}, "thrust_g must be"),
+    ({"name": "  "}, "name must be"),
+    ([1, 2], "body must be a JSON object"),
+])
+def test_resolve_validation(finished_run, body, fragment):
+    rid = finished_run()
+    res = client.post(f"/api/runs/{rid}/resolve", json=body)
+    assert res.status_code == 422, res.text
+    assert fragment in res.json()["detail"]
+    assert not finished_run.submitted
+
+
+def test_resolve_thrust_needs_props(finished_run):
+    rid = finished_run({k: v for k, v in QUAD_CFG.items() if k != "props"})
+    res = client.post(f"/api/runs/{rid}/resolve", json={"thrust_g": 100})
+    assert res.status_code == 422 and "propeller disks" in res.json()["detail"]
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"mesh": False},
+    {"compacted": True},
+    {"mesh_cells": None},
+])
+def test_resolve_needs_a_mesh_on_disk(finished_run, kwargs):
+    rid = finished_run(**kwargs)
+    assert client.get(f"/api/runs/{rid}").json()["has_mesh"] is False
+    res = client.post(f"/api/runs/{rid}/resolve", json={"wind_speed": 20})
+    assert res.status_code == 409 and "Re-run" in res.json()["detail"]

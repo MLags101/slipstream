@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type History, type LogTail, type RunDetail } from "../api";
 import { usePoll } from "../hooks/usePoll";
 import { refinementLabel } from "../lib/refinementText";
+import { ResolvePanel } from "./ResolvePanel";
 import { isTerminal } from "./StatusPill";
 import { StatusPill } from "./StatusPill";
 import { Stepper } from "./Stepper";
@@ -36,6 +37,8 @@ export function RunDetailView({
 }: Props) {
   const fetchRun = useCallback(() => api.getRun(id), [id]);
   const [cancelling, setCancelling] = useState(false);
+  const [resolving, setResolving] = useState(false);
+  useEffect(() => setResolving(false), [id]);
 
   const [snapshot, setSnapshot] = useState<RunDetail | null>(null);
   const terminal = snapshot !== null && isTerminal(snapshot.status);
@@ -144,11 +147,40 @@ export function RunDetailView({
               Re-run
             </button>
           )}
+          {terminal && run.has_mesh && (
+            <button
+              className="btn btn-sm"
+              onClick={() => setResolving((v) => !v)}
+              title="Solve again with a new wind speed or thrust, reusing this mesh"
+            >
+              Re-solve…
+            </button>
+          )}
           <button className="btn btn-danger btn-sm" onClick={() => onDelete(id)}>
             Delete
           </button>
         </div>
       </header>
+
+      {resolving && terminal && run.has_mesh && (
+        <ResolvePanel
+          run={run}
+          onCreated={(newId) => {
+            setResolving(false);
+            onSelectRun(newId);
+          }}
+          onClose={() => setResolving(false)}
+        />
+      )}
+
+      {run.config.mesh_from && (
+        <div className="config-note">
+          Re-solved on the mesh from{" "}
+          <button className="btn btn-ghost btn-sm" onClick={() => onSelectRun(run.config.mesh_from!)}>
+            {run.config.resolve_base_name ?? "the original run"}
+          </button>
+        </div>
+      )}
 
       {run.model?.watertight === false && (
         <div className="warn-banner">

@@ -24,7 +24,9 @@ no meshing tutorials, no cloud fees.
 - **Go further**: yaw/pitch sweeps with angle charts, two-run comparison, and — for
   aircraft — propeller actuator disks for powered flow plus an auto-**trim solver**
   that finds the forward-flight attitude and per-motor thrust for weight and speed
-- Runs **auto-stop when converged**, saving 30–40% of solve time
+- Runs **auto-stop when converged**, saving 30–40% of solve time, and the mesh is
+  built on all cores
+- **Re-solve on an existing mesh**: change wind speed or prop thrust and skip meshing
 - **Mesh-independence sweep**: reruns coarse → medium → fine until drag stops
   changing, so you know the answer isn't an artifact of cell size
 - **Optional refinement where it matters**: a longer refined wake, and refined

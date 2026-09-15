@@ -77,6 +77,18 @@ export interface RunConfig {
    * (requires `props`).
    */
   refinement?: RefinementOptions;
+  /** v8.2: set on re-solves — the run whose mesh this one reused. */
+  mesh_from?: string;
+  /** v8.2: original run name that re-solve names are built from. */
+  resolve_base_name?: string;
+}
+
+/** POST /api/runs/{id}/resolve body: only inputs that leave the mesh unchanged. */
+export interface ResolveRequest {
+  wind_speed?: number;
+  /** Grams per prop: one value for every prop, or one per prop. */
+  thrust_g?: number | number[];
+  name?: string;
 }
 
 export interface RefinementOptions {
@@ -234,6 +246,8 @@ export interface RunDetail {
   props_m?: PropDiskM[] | null;
   /** v8.1: refinement actually meshed (null when none was requested). */
   refinement?: RefinementInfo | null;
+  /** v8.2: the finished mesh is on disk, so the run can be re-solved on it. */
+  has_mesh?: boolean;
   mesh_cells: number | null;
   result: RunResult | null;
   error: string | null;
@@ -454,6 +468,16 @@ export const api = {
 
   async rerunRun(id: string): Promise<{ id: string }> {
     const res = await request(`/runs/${id}/rerun`, { method: "POST" });
+    return (await res.json()) as { id: string };
+  },
+
+  /** Solve again on this run's mesh with a new wind speed and/or thrust. */
+  async resolveRun(id: string, body: ResolveRequest): Promise<{ id: string }> {
+    const res = await request(`/runs/${id}/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
     return (await res.json()) as { id: string };
   },
 

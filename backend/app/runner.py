@@ -14,6 +14,7 @@ import math
 import os
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -300,6 +301,78 @@ class Runner:
         path.write_text(new)
         return True
 
+    # Printed once snappyHexMesh has actually started working on the case.
+    SNAPPY_STARTED = "Reading refinement surfaces."
+
+    def _mesh(self, case: Path, run_id: str) -> None:
+        """surfaceFeatureExtract -> blockMesh -> snappyHexMesh into
+        constant/polyMesh. snappyHexMesh runs on NPROCS ranks and the pieces are
+        merged back (reconstructParMesh), so checkMesh, topoSet and the solve's
+        own decomposePar see exactly the serial layout. A failed snappy is
+        retried without prism layers; if MPI never got snappy started, the mesh
+        is built on one core instead. WINDTUNNEL_SERIAL_MESH=1 forces serial."""
+        self.update(run_id, status="meshing", progress=0.11,
+                    message="Extracting surface features")
+        self._foam(case, "surfaceFeatureExtract", "log.surfaceFeatureExtract", run_id)
+
+        self.update(run_id, progress=0.14, message="Building background mesh (blockMesh)")
+        self._foam(case, "blockMesh", "log.blockMesh", run_id)
+
+        n = foamcase.NPROCS
+        if n > 1 and not os.environ.get("WINDTUNNEL_SERIAL_MESH"):
+            parallel = f"mpirun -np {n} snappyHexMesh -parallel -overwrite"
+            self._foam(case, "decomposePar -force", "log.decomposePar.mesh", run_id)
+            self.update(run_id, progress=0.17,
+                        message=f"Snapping mesh to geometry on {n} cores (snappyHexMesh)")
+            rc = self._foam(case, parallel, "log.snappyHexMesh", run_id, check=False)
+            if rc != 0 and self.SNAPPY_STARTED in self._log_tail(
+                    case / "log.snappyHexMesh", 10**6):
+                # Retry without prism layers. snappy only wrote into
+                # processor*/, so constant/polyMesh is still the block mesh.
+                self.update(run_id, progress=0.2,
+                            message="Layer addition failed - retrying castellated+snap only")
+                foamcase.set_add_layers(case, False)
+                self._foam(case, "decomposePar -force", "log.decomposePar.mesh", run_id)
+                rc = self._foam(case, parallel, "log.snappyHexMesh", run_id)
+            if rc == 0:
+                self.update(run_id, progress=0.3, message="Merging mesh pieces")
+                self._foam(case, "reconstructParMesh -constant",
+                           "log.reconstructParMesh", run_id)
+                foamcase.free_processor_dirs(case)
+                return
+            foamcase.free_processor_dirs(case)
+            self.update(run_id, message="Parallel meshing did not start - "
+                                        "meshing on one core")
+
+        self.update(run_id, progress=0.17,
+                    message="Snapping mesh to geometry (snappyHexMesh)")
+        rc = self._foam(case, "snappyHexMesh -overwrite", "log.snappyHexMesh",
+                        run_id, check=False)
+        if rc != 0:
+            # Retry without prism layers.
+            self.update(run_id, progress=0.2,
+                        message="Layer addition failed - retrying castellated+snap only")
+            foamcase.set_add_layers(case, False)
+            self._foam(case, "snappyHexMesh -overwrite", "log.snappyHexMesh", run_id)
+
+    def _reuse_mesh(self, case: Path, source_id: str, run_id: str) -> None:
+        """Re-solve: copy another run's finished mesh instead of meshing. The
+        API only allows inputs that leave the mesh unchanged, so the freshly
+        generated case (boundary names, ground, symmetry) matches it. Prop
+        cellZones and sets are dropped; topoSet re-marks the disks."""
+        src = self.run_dir(source_id) / "case" / "constant" / "polyMesh"
+        source = self.get(source_id)
+        label = source["name"] if source else source_id
+        self.update(run_id, status="meshing", progress=0.2,
+                    message=f"Reusing mesh from {label}")
+        if not any(src.glob("owner*")):
+            raise RuntimeError(
+                f"the mesh from {label} is gone (run deleted or compacted) - "
+                "use Re-run to mesh again")
+        dst = case / "constant" / "polyMesh"
+        shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("sets", "cellZones*"))
+
     def _execute(self, run_id: str) -> None:
         t0 = time.time()
         rd = self.run_dir(run_id)
@@ -355,23 +428,10 @@ class Runner:
         self.update(run_id, progress=0.1, message="Case generated")
 
         # ---- meshing (0.1 - 0.35) -----------------------------------------
-        self.update(run_id, status="meshing", progress=0.11,
-                    message="Extracting surface features")
-        self._foam(case, "surfaceFeatureExtract", "log.surfaceFeatureExtract", run_id)
-
-        self.update(run_id, progress=0.14, message="Building background mesh (blockMesh)")
-        self._foam(case, "blockMesh", "log.blockMesh", run_id)
-
-        self.update(run_id, progress=0.17,
-                    message="Snapping mesh to geometry (snappyHexMesh)")
-        rc = self._foam(case, "snappyHexMesh -overwrite", "log.snappyHexMesh",
-                        run_id, check=False)
-        if rc != 0:
-            # Retry without prism layers.
-            self.update(run_id, progress=0.2,
-                        message="Layer addition failed - retrying castellated+snap only")
-            foamcase.set_add_layers(case, False)
-            self._foam(case, "snappyHexMesh -overwrite", "log.snappyHexMesh", run_id)
+        if config.get("mesh_from"):
+            self._reuse_mesh(case, config["mesh_from"], run_id)
+        else:
+            self._mesh(case, run_id)
 
         self.update(run_id, progress=0.32, message="Checking mesh quality")
         self._foam(case, "checkMesh", "log.checkMesh", run_id, check=False)

@@ -1861,3 +1861,23 @@ body {
   width: 64px;
   margin: 0 4px;
 }
+
+/* Re-solve on an existing mesh */
+.resolve-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+.resolve-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.resolve-fields .field {
+  flex: 1 1 160px;
+}
+.resolve-actions {
+  display: flex;
+  gap: 8px;
+}

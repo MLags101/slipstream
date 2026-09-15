@@ -10,7 +10,7 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from starlette.concurrency import run_in_threadpool
@@ -420,6 +420,7 @@ def get_run(run_id: str):
         "model": model, "mesh_cells": s["mesh_cells"],
         "props_m": props_m,
         "refinement": s.get("refinement"),
+        "has_mesh": _has_mesh(s["id"]),
         "result": _compat_result(s["result"]), "error": s["error"],
     }
 
@@ -722,6 +723,70 @@ def rerun(run_id: str):
     for k in ("sweep_param", "trim"):
         cfg.pop(k, None)
     return {"id": _submit_run(stl.read_bytes(), cfg, group_id=None)}
+
+
+def _has_mesh(run_id: str) -> bool:
+    """True while a run's finished mesh is on disk and reusable."""
+    s = runner.get(run_id)
+    if not s or s.get("compacted") or not s.get("mesh_cells") or runner.is_active(run_id):
+        return False
+    return any((DATA_DIR / run_id / "case" / "constant" / "polyMesh").glob("owner*"))
+
+
+@app.post("/api/runs/{run_id}/resolve", status_code=201)
+async def resolve(run_id: str, request: Request):
+    """Solve again on this run's existing mesh with a new wind speed and/or
+    prop thrust, skipping surface extraction and snappyHexMesh entirely. Only
+    inputs that don't change the mesh can differ; everything else (attitude,
+    quality, refinement, ground, symmetry, STL) is inherited."""
+    _require_openfoam()
+    parent = _get_state(run_id)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(422, "body must be a JSON object")
+    unknown = set(body) - {"wind_speed", "thrust_g", "name"}
+    if unknown:
+        raise HTTPException(
+            422, f"only wind_speed, thrust_g and name can change on a re-solve "
+                 f"(got {', '.join(sorted(unknown))}); use a new run to change "
+                 "anything that affects the mesh")
+    if not _has_mesh(run_id):
+        raise HTTPException(
+            409, "this run's mesh is not available (still running, never "
+                 "finished meshing, or compacted) - use Re-run to mesh again")
+    rd = DATA_DIR / run_id
+    cfg = json.loads((rd / "config.json").read_text())
+    for k in ("sweep_param", "trim", "mesh_sweep", "yaw_sweep", "pitch_sweep"):
+        cfg.pop(k, None)
+
+    ws = body.get("wind_speed", cfg["wind_speed"])
+    if not (_num(ws) and 0 < ws < 200):
+        raise HTTPException(422, "wind_speed must be a number in (0, 200) m/s")
+    cfg["wind_speed"] = float(ws)
+
+    thrust = body.get("thrust_g")
+    if thrust is not None:
+        props = cfg.get("props") or []
+        if not props:
+            raise HTTPException(422, "thrust_g needs a run with propeller disks")
+        values = thrust if isinstance(thrust, list) else [thrust] * len(props)
+        if len(values) != len(props) or not all(_num(v) and v >= 0 for v in values):
+            raise HTTPException(
+                422, f"thrust_g must be a number >= 0 or a list of {len(props)} "
+                     "of them (grams per prop)")
+        cfg["props"] = [dict(p, thrust_g=float(v)) for p, v in zip(props, values)]
+
+    name = body.get("name")
+    if name is not None and not (isinstance(name, str) and name.strip()):
+        raise HTTPException(422, "name must be a non-empty string")
+    base = parent["config"].get("resolve_base_name") or parent["name"]
+    cfg["resolve_base_name"] = base
+    cfg["name"] = name.strip() if name else f"{base} @ {cfg['wind_speed']:g} m/s re-solve"
+    cfg["mesh_from"] = run_id
+    return {"id": _submit_run((rd / "model.stl").read_bytes(), cfg, group_id=None)}
 
 
 @app.delete("/api/runs/{run_id}")

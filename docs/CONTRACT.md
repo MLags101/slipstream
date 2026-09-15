@@ -421,3 +421,38 @@ recorded when the case is generated.
 Frontend: New run has an "Extra mesh refinement" group with the two checkboxes (the
 slipstream box needs prop disks). The run header appends e.g.
 `· long wake · slipstreams (4 zones, 3.8 mm cells)`.
+
+## v8.2: parallel meshing and re-solve on an existing mesh
+
+### Parallel meshing
+
+`Runner._mesh` builds the mesh on `NPROCS` ranks: `surfaceFeatureExtract` → `blockMesh` →
+`decomposePar -force` (`log.decomposePar.mesh`) → `mpirun -np N snappyHexMesh -parallel
+-overwrite` → `reconstructParMesh -constant` (`log.reconstructParMesh`) → processor dirs
+deleted. `constant/polyMesh` ends up exactly where the serial path put it, so checkMesh,
+topoSet and the solve's own `decomposePar` are unchanged.
+
+- snappy fails after starting (its log contains `Reading refinement surfaces.`): retry in
+  parallel without prism layers (same as the serial layer retry).
+- MPI never got snappy started (marker absent): mesh serially instead, with layers.
+- `WINDTUNNEL_SERIAL_MESH=1` forces the serial path.
+
+### Re-solve
+
+`POST /api/runs/{id}/resolve` (JSON) creates a new standalone run that copies this run's
+`case/constant/polyMesh` instead of meshing. Body: `{"wind_speed"?: number, "thrust_g"?:
+number | number[], "name"?: string}`; any other key → 422 (attitude, quality, refinement,
+ground, symmetry and the STL all affect the mesh). `thrust_g` is grams per prop, one value
+for all or one per prop; it needs a run with props (422). 409 unless the mesh is on disk
+(`has_mesh`): not running, `mesh_cells` set, not compacted, `polyMesh/owner*` present.
+
+The child config is the parent's minus group keys (`sweep_param`, `trim`, `mesh_sweep`,
+sweeps), with `mesh_from: <parent id>`, `resolve_base_name` (the original run's name,
+carried through re-solves of re-solves) and default name `<base> @ <ws> m/s re-solve`.
+The runner copies the mesh without `cellZones`/`sets` (topoSet re-marks prop disks); if the
+source mesh vanished before the child ran, the child errors and points to Re-run.
+Slipstream refinement zones keep the aim of the original speed/thrust.
+
+`GET /api/runs/{id}` gains `has_mesh`. Frontend: a finished run with a mesh shows
+**Re-solve…** (wind speed + thrust per prop form); re-solved runs link back to the run
+whose mesh they used.
