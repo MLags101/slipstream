@@ -409,8 +409,9 @@ config. It passes through unchanged to sweep, trim and mesh-sweep members. Defau
   0.6D, from 0.5D upstream of the disk to 3D downstream. The direction is the far-wake
   slipstream `U∞·x̂ − 2·vᵢ·axis`, with vᵢ from momentum theory
   (`vᵢ·sqrt(U∞² + vᵢ²) = T / (2ρA)`), so it points along −axis in hover and sweeps back
-  in fast forward flight. The level is the octree level whose cell size is nearest
-  D/16 (coarse), D/24 (medium) or D/32 (fine), clamped to [1, surface max level].
+  in fast forward flight. The level is the coarsest octree level with at least 16
+  (coarse), 24 (medium) or 32 (fine) cells across D, clamped to [3, surface max level];
+  3 is one level finer than the level-2 wake box, so the zone always adds resolution.
   Cell caps (`maxGlobalCells`) still apply.
 
 `GET /api/runs/{id}` gains `refinement` (null unless requested): `{long_wake:

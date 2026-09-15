@@ -48,9 +48,12 @@ REFINEMENT_OPTIONS = ("long_wake", "prop_slipstream")
 LONG_WAKE_L2_L = 4.0
 LONG_WAKE_L1_L = 8.0
 
-# Prop slipstream cylinders: target cells across the prop diameter per quality,
-# snapped to the nearest octree level. Length/radius in prop diameters.
+# Prop slipstream cylinders: at least this many cells across the prop diameter
+# per quality, and never coarser than SLIPSTREAM_MIN_LEVEL (one level finer
+# than the level-2 wake box, which would otherwise make the zone a no-op).
+# Length/radius in prop diameters.
 SLIPSTREAM_CELLS_ACROSS = {"coarse": 16, "medium": 24, "fine": 32}
+SLIPSTREAM_MIN_LEVEL = 3
 SLIPSTREAM_UPSTREAM_D = 0.5
 SLIPSTREAM_DOWNSTREAM_D = 3.0
 SLIPSTREAM_RADIUS_D = 0.6
@@ -95,8 +98,8 @@ def slipstream_regions(props_m: list[dict], u_inf: float, rho: float,
         cx, cy, cz = p["center_m"]
         up, down = SLIPSTREAM_UPSTREAM_D * d, SLIPSTREAM_DOWNSTREAM_D * d
         target = d / SLIPSTREAM_CELLS_ACROSS[quality]
-        level = int(math.floor(math.log2(base_cell / target) + 0.5))
-        level = max(1, min(level, surf_max))
+        level = math.ceil(math.log2(base_cell / target) - 1e-9)
+        level = max(SLIPSTREAM_MIN_LEVEL, min(level, surf_max))
         regions.append({
             "point1": [cx - sx * up, cy - sy * up, cz - sz * up],
             "point2": [cx + sx * down, cy + sy * down, cz + sz * down],

@@ -82,22 +82,29 @@ def test_unpowered_disk_in_still_air_covers_its_own_wake():
     assert r["direction"] == pytest.approx([0.0, 0.0, -1.0])
 
 
-@pytest.mark.parametrize("quality,expected", [
-    ("coarse", 3),  # target 7.9 mm from a 60 mm base cell -> 7.5 mm
-    ("medium", 4),  # target 5.3 mm -> 3.75 mm
-    ("fine", 4),    # target 4.0 mm -> 3.75 mm
+@pytest.mark.parametrize("base_cell,diameter,quality,expected", [
+    (0.06, 0.127, "coarse", 3),   # needs <= 7.9 mm -> 7.5 mm
+    (0.06, 0.127, "medium", 4),   # needs <= 5.3 mm -> 3.75 mm
+    (0.06, 0.127, "fine", 4),     # needs <= 4.0 mm -> 3.75 mm
+    # Sample quad at coarse: needs <= 8.7 mm from a 42 mm base cell. Rounding
+    # to the nearest level gave level 2 (10.5 mm, same as the wake box).
+    (0.042, 0.1392, "coarse", 3),
 ])
-def test_slipstream_level_snaps_to_nearest_octree_level(quality, expected):
-    (r,) = foamcase.slipstream_regions([PROP], 15.0, 1.225, 0.06, quality, 7)
+def test_slipstream_level_gives_at_least_target_cells_across(
+        base_cell, diameter, quality, expected):
+    prop = dict(PROP, diameter_m=diameter)
+    (r,) = foamcase.slipstream_regions([prop], 15.0, 1.225, base_cell, quality, 7)
     assert r["level"] == expected
-    assert r["cell_m"] == pytest.approx(0.06 / 2 ** expected)
+    assert r["cell_m"] == pytest.approx(base_cell / 2 ** expected)
+    assert diameter / r["cell_m"] >= foamcase.SLIPSTREAM_CELLS_ACROSS[quality]
 
 
-def test_slipstream_level_never_exceeds_surface_level():
+def test_slipstream_level_is_clamped_between_wake_box_and_surface_level():
     (r,) = foamcase.slipstream_regions([PROP], 15.0, 1.225, 1.0, "fine", 5)
     assert r["level"] == 5
+    # Huge prop vs. tiny base cell: still one level finer than the wake box.
     (r,) = foamcase.slipstream_regions([PROP], 15.0, 1.225, 0.001, "coarse", 5)
-    assert r["level"] == 1
+    assert r["level"] == foamcase.SLIPSTREAM_MIN_LEVEL
 
 
 def test_slipstream_cylinders_written_per_prop(tmp_path):
