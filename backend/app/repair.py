@@ -21,6 +21,10 @@ no connectivity, so the offset can't open holes.
 """
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Callable
@@ -41,6 +45,11 @@ INWARD_OFFSET_VOXELS = 0.62
 PAD = 4
 
 Progress = Callable[[float, str], None]
+
+# pymeshlab is never imported into this process: it can abort the interpreter
+# on the way out. It runs in a throwaway child instead — see
+# app/pymeshlab_worker.py.
+_WORKER_MODULE = "app.pymeshlab_worker"
 
 
 def edge_stats(mesh: trimesh.Trimesh) -> tuple[int, int]:
@@ -111,12 +120,47 @@ def _oriented(vertices, faces) -> trimesh.Trimesh:
     return mesh
 
 
+def _decimate_pymeshlab(mesh: trimesh.Trimesh, target: int) -> trimesh.Trimesh | None:
+    """Quadric collapse in a short-lived child process, or None if it didn't
+    deliver one.
+
+    The child is the whole point: pymeshlab corrupts the heap in its static
+    teardown (app/pymeshlab_worker.py), so it must never be loaded into the
+    backend. Everything that can go wrong in the child — no pymeshlab, plugins
+    that didn't load and left no filters, a filter failure, a crash — lands
+    here as a missing output file, and the caller falls back exactly as it did
+    when the import failed.
+    """
+    if getattr(sys, "frozen", False):
+        # PyInstaller: sys.executable is the app itself, so there is no
+        # `python -m` to run, and pymeshlab isn't bundled anyway.
+        return None
+    env = dict(os.environ)
+    root = str(Path(__file__).resolve().parent.parent)
+    env["PYTHONPATH"] = os.pathsep.join(x for x in (root, env.get("PYTHONPATH")) if x)
+    with tempfile.TemporaryDirectory(prefix="wt-decimate-") as tmp:
+        src, dst = Path(tmp) / "in.npz", Path(tmp) / "out.npz"
+        np.savez(src, vertices=mesh.vertices.astype(np.float64),
+                 faces=mesh.faces.astype(np.int32))
+        try:
+            subprocess.run(
+                [sys.executable, "-m", _WORKER_MODULE, str(src), str(dst), str(int(target))],
+                env=env, capture_output=True, check=False)
+        except OSError:  # no interpreter to run
+            return None
+        if not dst.exists():
+            return None
+        with np.load(dst) as data:
+            vertices, faces = data["vertices"], data["faces"]
+    return _oriented(vertices, faces)
+
+
 def decimate(mesh: trimesh.Trimesh, target: int,
              prefer_pymeshlab: bool = True) -> tuple[trimesh.Trimesh, str]:
     """Reduce triangles without breaking the closed surface.
 
     pymeshlab's quadric collapse with preservetopology reaches the target and
-    stays manifold. fast_simplification is the lightweight fallback: at agg=1
+    stays manifold; it runs out-of-process (see `_decimate_pymeshlab`). fast_simplification is the lightweight fallback: at agg=1
     it cut a real frame's marching-cubes surface from 4.5M to 1.8M triangles
     and stayed manifold, but it can still pinch other shapes (a subdivided box
     gains non-manifold edges), and higher agg pinches badly. So every result is
@@ -126,30 +170,9 @@ def decimate(mesh: trimesh.Trimesh, target: int,
         return mesh, "none"
     bodies = mesh.body_count
     if prefer_pymeshlab:
-        try:
-            import pymeshlab
-        except ImportError:
-            pymeshlab = None
-        if pymeshlab is not None:
-            # pymeshlab can import yet have no filters: its plugins are shared
-            # libraries that fail to load without system OpenGL (seen on
-            # headless Linux: libOpenGL.so.0 missing -> no decimation filter).
-            # Any failure here must fall through, not fail the whole repair.
-            try:
-                ms = pymeshlab.MeshSet()
-                ms.add_mesh(pymeshlab.Mesh(vertex_matrix=mesh.vertices.astype(np.float64),
-                                           face_matrix=mesh.faces.astype(np.int32)))
-                ms.meshing_decimation_quadric_edge_collapse(
-                    targetfacenum=int(target), preservetopology=True,
-                    preserveboundary=True, preservenormal=True,
-                    optimalplacement=True, planarquadric=True,
-                    qualitythr=0.4, autoclean=True)
-                m = ms.current_mesh()
-                out = _oriented(m.vertex_matrix(), m.face_matrix())
-            except Exception:  # noqa: BLE001 — broken install: use the fallback
-                out = None
-            if out is not None and _closed(out) and out.body_count <= bodies:
-                return out, "pymeshlab"
+        out = _decimate_pymeshlab(mesh, target)
+        if out is not None and _closed(out) and out.body_count <= bodies:
+            return out, "pymeshlab"
     import fast_simplification
     v, f = fast_simplification.simplify(
         mesh.vertices.astype(np.float32), mesh.faces.astype(np.int64),

@@ -1,6 +1,10 @@
 """Model repair: broken STLs come back closed, manifold, and where they were."""
 from __future__ import annotations
 
+import importlib.util
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -80,8 +84,8 @@ def test_progress_reports_monotonic_stages(tmp_path):
 def test_decimation_never_breaks_the_surface(prefer_pymeshlab):
     """Either decimator may be used; neither may open or pinch the surface, and
     the report must not claim a reduction that didn't happen."""
-    if prefer_pymeshlab:
-        pytest.importorskip("pymeshlab")
+    if prefer_pymeshlab and importlib.util.find_spec("pymeshlab") is None:
+        pytest.skip("pymeshlab not installed")
     dense = trimesh.creation.icosphere(subdivisions=6, radius=50.0)   # 80k tris
     out, used = repair.decimate(dense, 8_000, prefer_pymeshlab=prefer_pymeshlab)
     assert out.is_watertight and repair.edge_stats(out) == (0, 0)
@@ -127,11 +131,28 @@ def test_voxel_pitch_respects_resolution_and_memory_cap():
         repair.voxel_pitch([0, 0, 0])
 
 
-def test_broken_pymeshlab_install_falls_back(monkeypatch):
+def test_decimation_falls_back_when_the_worker_produces_nothing(monkeypatch):
+    """pymeshlab runs in a child process that is allowed to fail: no install,
+    plugins that didn't load, or a crash. Whatever the reason, no output file
+    comes back and repair must fall back, not crash. Simulated here by pointing
+    the child at a module that doesn't exist."""
+    monkeypatch.setattr(repair, "_WORKER_MODULE", "app.no_such_worker")
+    box = trimesh.creation.box(extents=(40.0, 20.0, 10.0))
+    for _ in range(4):
+        box = box.subdivide()
+    out, used = repair.decimate(box, 500, prefer_pymeshlab=True)
+    assert used in ("fast_simplification", "none")
+    assert out.is_watertight and repair.edge_stats(out) == (0, 0)
+
+
+def test_broken_pymeshlab_install_is_an_error_in_the_worker(monkeypatch):
     """pymeshlab can import but have no filters when its plugins can't load
-    (headless Linux without libOpenGL). Repair must fall back, not crash."""
+    (headless Linux without libOpenGL). The worker must raise so that it exits
+    without writing a result, rather than writing an undecimated mesh."""
     import sys
     import types
+
+    from app import pymeshlab_worker
 
     class _MeshSet:  # imports fine, but the decimation filter is missing
         def add_mesh(self, _mesh):
@@ -141,8 +162,22 @@ def test_broken_pymeshlab_install_falls_back(monkeypatch):
     monkeypatch.setitem(sys.modules, "pymeshlab", broken)
 
     box = trimesh.creation.box(extents=(40.0, 20.0, 10.0))
-    for _ in range(4):
-        box = box.subdivide()
-    out, used = repair.decimate(box, 500, prefer_pymeshlab=True)
-    assert used in ("fast_simplification", "none")
-    assert out.is_watertight and repair.edge_stats(out) == (0, 0)
+    with pytest.raises(AttributeError):
+        pymeshlab_worker.decimate(box.vertices, box.faces, 4)
+
+
+def test_worker_leaves_no_crash_behind(tmp_path):
+    """The whole point of the child: it does the work and exits cleanly, so a
+    long-lived backend never carries pymeshlab's teardown."""
+    if importlib.util.find_spec("pymeshlab") is None:
+        pytest.skip("pymeshlab not installed")
+    dense = trimesh.creation.icosphere(subdivisions=4, radius=50.0)
+    src, dst = tmp_path / "in.npz", tmp_path / "out.npz"
+    np.savez(src, vertices=dense.vertices, faces=dense.faces)
+    env = {**os.environ, "PYTHONPATH": str(Path(repair.__file__).resolve().parent.parent)}
+    done = subprocess.run([sys.executable, "-m", "app.pymeshlab_worker",
+                           str(src), str(dst), "500"],
+                          env=env, capture_output=True)
+    assert done.returncode == 0, done.stderr.decode()
+    with np.load(dst) as data:
+        assert len(data["faces"]) <= 500 * 1.05
