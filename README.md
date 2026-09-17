@@ -2,7 +2,7 @@
 
 # Slipstream
 
-[![Tests](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml/badge.svg)](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml)
+[![Tests](https://github.com/OwenTWebb/slipstream/actions/workflows/tests.yml/badge.svg)](https://github.com/OwenTWebb/slipstream/actions/workflows/tests.yml)
 
 **Drop in an STL. Get a wind tunnel analysis. Free, local, yours.**
 

@@ -9,10 +9,10 @@ cask "slipstream" do
   version "0.1.0"
   sha256 "REPLACE_WITH_SHA256_FROM_RELEASE_WORKFLOW"
 
-  url "https://github.com/OwenTWebb/windtunnel/releases/download/v#{version}/Slipstream-v#{version}-macos-arm64.zip"
+  url "https://github.com/OwenTWebb/slipstream/releases/download/v#{version}/Slipstream-v#{version}-macos-arm64.zip"
   name "Slipstream"
   desc "Virtual wind tunnel: drop an STL, get OpenFOAM CFD analysis"
-  homepage "https://github.com/OwenTWebb/windtunnel"
+  homepage "https://github.com/OwenTWebb/slipstream"
 
   depends_on cask: "gerlero/openfoam/openfoam"
   depends_on arch: :arm64
