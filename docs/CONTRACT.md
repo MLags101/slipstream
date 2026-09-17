@@ -1,4 +1,4 @@
-# WindTunnel — Architecture & API Contract
+# Slipstream — Architecture & API Contract
 
 Free, local AirShaper-equivalent: drop an STL → virtual wind tunnel analysis via OpenFOAM.
 
@@ -435,7 +435,7 @@ topoSet and the solve's own `decomposePar` are unchanged.
 - snappy fails after starting (its log contains `Reading refinement surfaces.`): retry in
   parallel without prism layers (same as the serial layer retry).
 - MPI never got snappy started (marker absent): mesh serially instead, with layers.
-- `WINDTUNNEL_SERIAL_MESH=1` forces the serial path.
+- `SLIPSTREAM_SERIAL_MESH=1` forces the serial path (the pre-rename `WINDTUNNEL_SERIAL_MESH` also works).
 
 ### Re-solve
 

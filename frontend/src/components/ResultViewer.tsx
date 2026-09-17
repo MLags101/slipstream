@@ -658,7 +658,7 @@ export function ResultViewer({ runId, config, model, props }: Props) {
             if (!v) return;
             v.renderer.render(v.scene, v.camera);
             downloadDataUrl(
-              `windtunnel_${mode}.png`,
+              `slipstream_${mode}.png`,
               v.renderer.domElement.toDataURL("image/png"),
             );
           }}

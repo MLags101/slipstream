@@ -1,4 +1,4 @@
-"""WindTunnel backend - FastAPI app. Filesystem is the store; no DB, no auth."""
+"""Slipstream backend - FastAPI app. Filesystem is the store; no DB, no auth."""
 from __future__ import annotations
 
 import json
@@ -22,11 +22,11 @@ from . import props as prop_detect
 from .runner import Runner
 
 DATA_DIR = Path(
-    os.environ.get("WINDTUNNEL_DATA_DIR")
+    foamenv.env("DATA_DIR")
     or Path(__file__).resolve().parent.parent / "data"
 ) / "runs"
 
-app = FastAPI(title="WindTunnel backend")
+app = FastAPI(title="Slipstream backend")
 runner = Runner(DATA_DIR)
 
 VALID_UNITS = {"mm", "cm", "m", "in"}
@@ -52,7 +52,7 @@ def health():
 
 
 OPENFOAM_MISSING = (
-    "OpenFOAM isn't installed (or isn't where WindTunnel can find it). Install it "
+    "OpenFOAM isn't installed (or isn't where Slipstream can find it). Install it "
     "with `brew install --cask gerlero/openfoam/openfoam`, then start the run again."
 )
 
@@ -954,8 +954,8 @@ def delete_run(run_id: str):
     return JSONResponse({"deleted": run_id})
 
 
-# Desktop/app mode: serve the built frontend when WINDTUNNEL_STATIC is set.
-_static = os.environ.get("WINDTUNNEL_STATIC")
+# Desktop/app mode: serve the built frontend when SLIPSTREAM_STATIC is set.
+_static = foamenv.env("STATIC")
 if _static and Path(_static).is_dir():
     from fastapi.staticfiles import StaticFiles
     app.mount("/", StaticFiles(directory=_static, html=True), name="ui")

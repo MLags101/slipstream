@@ -1,6 +1,6 @@
 # Validation against published measurements
 
-WindTunnel is only useful if its numbers mean something. This page compares its drag
+Slipstream is only useful if its numbers mean something. This page compares its drag
 predictions with classic wind tunnel measurements, using the same app, defaults and
 automatic meshing anyone gets. Nothing was hand-tuned per case.
 
@@ -18,7 +18,7 @@ backend/.venv/bin/python examples/validation/report.py           # prints the ta
 
 ## Summary
 
-| Case | WindTunnel Cd (finest settled mesh) | Measured Cd | Difference |
+| Case | Slipstream Cd (finest settled mesh) | Measured Cd | Difference |
 |---|---|---|---|
 | Ahmed body, 25° slant | 0.311 | 0.285 | **+9%**, mesh independent |
 | Sphere, Re = 1×10⁵ | 0.319 | 0.47 | **−32%**, not yet mesh independent |
@@ -31,7 +31,7 @@ two designs at the same speed is still meaningful, but the absolute number isn't
 
 ## The cases
 
-| Case | Why it's a good test | Setup in WindTunnel |
+| Case | Why it's a good test | Setup in Slipstream |
 |---|---|---|
 | Sphere, Re = 1×10⁵ | The most measured shape there is. Laminar boundary layer, early separation, Cd ≈ 0.47. | 100 mm sphere, 15 m/s, half-model symmetry |
 | Sphere, Re = 4×10⁶ | Same shape past the "drag crisis": the boundary layer is turbulent before it separates, Cd ≈ 0.18. | same STL read in cm (1 m), 60 m/s, symmetry |
@@ -94,7 +94,7 @@ in the result). The drag is again 96%
 pressure drag: here the solver separates the flow too early and leaves too wide a wake,
 the opposite error from the slow sphere.
 
-Put the two sphere cases together and the pattern is clear. WindTunnel's sphere drag
+Put the two sphere cases together and the pattern is clear. Slipstream's sphere drag
 barely changes with Reynolds number (0.26 to 0.32), while a real sphere drops from 0.47 to
 about 0.18 through the drag crisis. Smooth curved surfaces, where the separation point is
 free to move, are the weakest case for this solver. Bodies with sharp edges that fix where
@@ -107,7 +107,7 @@ stopped at a converged answer on a 0.7M-cell half model. That is 9% above the me
 the separated flow rather than skin friction. Overpredicting drag on the 25° slant is the
 typical result for steady k-ω SST, because 25° sits right at the angle where the real flow
 over the slant switches between reattaching and fully separating, and steady RANS tends to
-get that switch wrong. The frontal area WindTunnel measured from the STL, 0.1120 m², matches
+get that switch wrong. The frontal area Slipstream measured from the STL, 0.1120 m², matches
 the published reference area of 0.112 m², so the geometry and coefficients line up.
 
 ## Known limitations, stated plainly
@@ -115,11 +115,11 @@ the published reference area of 0.112 m², so the geometry and coefficients line
 - **Steady RANS with k-ω SST treats every boundary layer as turbulent.** Real flow at low
   Reynolds number starts laminar and separates earlier, with more drag. That is a large
   part of why the Re = 1×10⁵ sphere comes out a third below its measured drag. Nothing in
-  the mesh fixes this; it needs a transition model, which WindTunnel doesn't have yet.
+  the mesh fixes this; it needs a transition model, which Slipstream doesn't have yet.
   Small, slow models (RC aircraft at low speed, pinewood derby cars) are in this regime,
   so trust comparisons between designs more than absolute drag there.
 - **Steady solves of unsteady wakes.** Bluff-body wakes shed vortices. A steady solver
-  returns an averaged-looking flow and the Cd settles with some wobble; WindTunnel reports
+  returns an averaged-looking flow and the Cd settles with some wobble; Slipstream reports
   Cd averaged over the last 20% of iterations and its spread.
 - **The Ahmed body is modeled without its four support stilts**, and the app places the
   floor 12% of the body height (35 mm) below it instead of the experiment's 50 mm.

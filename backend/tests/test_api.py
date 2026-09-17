@@ -14,7 +14,7 @@ import trimesh
 
 if "app.main" in sys.modules:  # pragma: no cover — never touch real run data
     pytest.skip("app.main already imported with the real data dir", allow_module_level=True)
-os.environ["WINDTUNNEL_DATA_DIR"] = tempfile.mkdtemp(prefix="wt-test-")
+os.environ["SLIPSTREAM_DATA_DIR"] = tempfile.mkdtemp(prefix="slipstream-test-")
 
 from fastapi.testclient import TestClient  # noqa: E402
 

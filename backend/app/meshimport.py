@@ -1,11 +1,11 @@
 """Bring your own volume mesh: convert Gmsh / Fluent / zipped OpenFOAM meshes
-into a WindTunnel case.
+into a Slipstream case.
 
 Import has two steps. `inspect_mesh` converts the upload to an OpenFOAM
 polyMesh (in meters), runs checkMesh and lists the boundary patches with a
 suggested role for each. The run then copies that polyMesh into its case.
 
-Roles map onto OpenFOAM patch *groups* named like the patches WindTunnel's own
+Roles map onto OpenFOAM patch *groups* named like the patches Slipstream's own
 meshes have (inlet, outlet, walls, model), so the field files, force function
 objects and surface sampling work unchanged: OpenFOAM matches boundaryField
 and `patches (...)` entries against group names. Only no-slip walls and
@@ -371,7 +371,7 @@ _NOSLIP_BC = {
 
 
 def add_role_fields(case: Path, roles: dict[str, str]) -> None:
-    """Field entries for the roles WindTunnel's own template doesn't have."""
+    """Field entries for the roles Slipstream's own template doesn't have."""
     used = set(roles.values())
     for field in ("U", "p", "k", "omega", "nut"):
         f = case / "0" / field

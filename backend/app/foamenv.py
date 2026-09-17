@@ -5,8 +5,13 @@ import glob
 import os
 import shutil
 
+def env(name: str) -> str | None:
+    """SLIPSTREAM_<name>, or the pre-rename WINDTUNNEL_<name> (still honored)."""
+    return os.environ.get(f"SLIPSTREAM_{name}") or os.environ.get(f"WINDTUNNEL_{name}")
+
+
 _CANDIDATES = [
-    os.environ.get("WINDTUNNEL_OPENFOAM", ""),
+    env("OPENFOAM") or "",
     "/opt/homebrew/bin/openfoam",
     "/usr/local/bin/openfoam",
 ]

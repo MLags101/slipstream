@@ -108,7 +108,7 @@ export function MeshImportView({ onCreated, onBack }: Props) {
         </button>
         <h1>Import a mesh</h1>
         <p className="config-note">
-          Skip WindTunnel's meshing and solve on your own volume mesh: a Gmsh
+          Skip Slipstream's meshing and solve on your own volume mesh: a Gmsh
           .msh (version 2 ASCII), an ASCII Fluent .msh or .cas, or a .zip of an
           OpenFOAM constant/polyMesh folder. The wind blows along +X, so the
           inlet must be at the low-x end.

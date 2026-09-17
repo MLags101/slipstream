@@ -1,12 +1,12 @@
-<p align="center"><img src="assets/icon-1024.png" width="128" alt="WindTunnel icon"></p>
+<p align="center"><img src="assets/icon-1024.png" width="128" alt="Slipstream icon"></p>
 
-# WindTunnel
+# Slipstream
 
 [![Tests](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml/badge.svg)](https://github.com/OwenTWebb/windtunnel/actions/workflows/tests.yml)
 
 **Drop in an STL. Get a wind tunnel analysis. Free, local, yours.**
 
-WindTunnel is a desktop virtual wind tunnel for anyone with a shape and a question:
+Slipstream is a desktop virtual wind tunnel for anyone with a shape and a question:
 RC planes and multirotors, model cars, bike and motorcycle fairings, spoilers and
 cowlings, pinewood derby racers, boat hulls, architectural models — anything you can
 export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
@@ -51,7 +51,7 @@ Commercial CFD tools are either too expensive or take far too long to learn.
 Open-source solvers like OpenFOAM are just as accurate, but they give you text
 dictionaries and a terminal, not the smooth workflow of enterprise software. As a
 college student I have neither the budget for licenses nor the time to hand-build
-meshes for every design change. WindTunnel keeps OpenFOAM's solver and handles all
+meshes for every design change. Slipstream keeps OpenFOAM's solver and handles all
 the setup around it, so a full 3D velocity and pressure analysis starts with
 dropping in an STL.
 
@@ -61,11 +61,11 @@ dropping in an STL.
    ```sh
    brew install --cask gerlero/openfoam/openfoam
    ```
-2. **Install WindTunnel**: download `WindTunnel-<version>-macos-arm64.zip` from the
+2. **Install Slipstream**: download `Slipstream-<version>-macos-arm64.zip` from the
    latest [release](../../releases/latest) (Apple Silicon Macs), unzip it, move
-   `WindTunnel.app` to `/Applications`, and read the first-launch note below.
+   `Slipstream.app` to `/Applications`, and read the first-launch note below.
    On an Intel Mac, [build from source](#building-from-source) instead.
-3. **Run your first analysis**: open WindTunnel, drop an STL onto the target,
+3. **Run your first analysis**: open Slipstream, drop an STL onto the target,
    check the unit (mm for 3D-print exports), set a wind speed, pick **coarse**
    quality, and hit **Run analysis**. A few minutes later you'll have a drag
    coefficient and a flow field to explore. Tip: coarse is great for comparing
@@ -73,7 +73,7 @@ dropping in an STL.
 
 ## "macOS says the app is from an unidentified developer"
 
-WindTunnel is free and unsigned — an Apple Developer certificate costs $99/year,
+Slipstream is free and unsigned — an Apple Developer certificate costs $99/year,
 which this project doesn't have (yet). The app is open source, and you can read or
 build every line of it. To open it the first time:
 **System Settings → Privacy & Security → "Open Anyway"**.
@@ -102,8 +102,8 @@ cd backend && python3 -m venv .venv
 cd ../frontend && npm install && npm run build
 # desktop app
 cd ../backend && .venv/bin/pip install pywebview pyinstaller
-.venv/bin/pyinstaller --noconfirm --windowed --name WindTunnel \
-  --icon ../assets/WindTunnel.icns \
+.venv/bin/pyinstaller --noconfirm --windowed --name Slipstream \
+  --icon ../assets/Slipstream.icns \
   --add-data "../frontend/dist:ui" \
   --add-data "app/foam_template:app/foam_template" \
   --collect-submodules app \
@@ -112,7 +112,7 @@ cd ../backend && .venv/bin/pip install pywebview pyinstaller
   --hidden-import uvicorn.protocols.websockets.auto \
   --hidden-import uvicorn.lifespan.on \
   desktop_app.py
-open dist/WindTunnel.app
+open dist/Slipstream.app
 ```
 
 For development, run the backend (`uvicorn app.main:app --port 8000`) and frontend
@@ -136,7 +136,7 @@ coarse analysis against a backend on `:8000` and does.
 - How close it gets to real wind tunnel data, and where it doesn't, is measured in
   [docs/VALIDATION.md](docs/VALIDATION.md) (sphere and Ahmed body).
 - Runs are CPU-hungry by design — a coarse run uses ~6 cores for a few minutes.
-- Run data lives in `~/.windtunnel` (OpenFOAM can't handle spaces in paths, so not
+- Run data lives in `~/.slipstream` (OpenFOAM can't handle spaces in paths, so not
   `~/Library/Application Support`).
 
 ## License

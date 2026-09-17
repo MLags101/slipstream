@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 WindTunnel contributors
+Copyright (c) 2026 Slipstream contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,6 @@ SOFTWARE.
 
 ---
 
-Note: WindTunnel invokes OpenFOAM (https://www.openfoam.com) as a separate
+Note: Slipstream invokes OpenFOAM (https://www.openfoam.com) as a separate
 external program. OpenFOAM is licensed under the GNU GPL v3 and is NOT bundled
 with, linked into, or derived from this software; install it separately.

@@ -1,6 +1,6 @@
 # Solving on your own mesh
 
-WindTunnel normally meshes your STL with snappyHexMesh. If you already have a volume mesh
+Slipstream normally meshes your STL with snappyHexMesh. If you already have a volume mesh
 you trust (from Gmsh, Fluent Meshing, ICEM, Pointwise, or a finished OpenFOAM case), you can
 skip that step and solve on it directly.
 
@@ -21,14 +21,14 @@ Only 3D meshes are supported (no `empty` patches).
 1. **Pick the file and its units.** The mesh is converted, scaled to meters, and checked
    with `checkMesh`. A mesh that fails some checks can still be run; the failed count is
    shown so you can decide.
-2. **Give every boundary patch a role.** WindTunnel suggests one from the patch names:
+2. **Give every boundary patch a role.** Slipstream suggests one from the patch names:
 
    | Role | Boundary condition |
    |---|---|
    | inlet | fixed freestream velocity along +X, turbulence from 1% intensity |
    | outlet | fixed pressure, outflow |
    | model | no-slip wall with wall functions; **forces, Cd and surface pressure come from these patches** |
-   | tunnel wall (slip) | frictionless wall, like WindTunnel's own tunnel sides |
+   | tunnel wall (slip) | frictionless wall, like Slipstream's own tunnel sides |
    | wall (no-slip) | no-slip wall with wall functions that isn't part of the model, e.g. a floor |
    | symmetry plane | mirror plane (must be flat) |
 
@@ -43,19 +43,19 @@ Only 3D meshes are supported (no `empty` patches).
   Rotate the mesh in your mesher if needed.
 - **Frontal area and the 3D view come from the model patches**, so the reference area is
   the frontal area of the meshed surface. Set a reference area to override it.
-- **Blockage is up to you.** WindTunnel sizes its own tunnel so the model blocks under 5% of
+- **Blockage is up to you.** Slipstream sizes its own tunnel so the model blocks under 5% of
   it; an imported domain is used as-is.
 - Imported runs support re-solve (new wind speed on the same mesh) and re-run. Yaw/pitch
   sweeps, props, trim, symmetry and refinement options apply only to STL runs, since they
   change the geometry or the mesh.
 
-## Checked against WindTunnel's own mesh
+## Checked against Slipstream's own mesh
 
 The same 256k-cell quad frame mesh was solved from an STL and then imported back in:
 
 | Mesh source | Cells | Frontal area | Cd |
 |---|---|---|---|
-| WindTunnel meshed the STL | 256,439 | 41.68 cm² | 1.159 |
+| Slipstream meshed the STL | 256,439 | 41.68 cm² | 1.159 |
 | Imported as a zipped polyMesh | 256,439 | 41.68 cm² | 1.168 |
 | Exported to Fluent `.msh` and imported | 256,439 | 41.68 cm² | 1.169 |
 

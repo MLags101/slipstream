@@ -16,7 +16,7 @@ jobs:
       matrix:
         # "lean" is what most people install; "full" adds the optional pymeshlab
         # decimator so both model-repair paths stay covered. The pymeshlab leg
-        # runs on macOS (the platform WindTunnel ships for): on headless Linux
+        # runs on macOS (the platform Slipstream ships for): on headless Linux
         # its native libraries corrupt the heap and abort the interpreter at
         # exit ("malloc_consolidate(): unaligned fastbin chunk") even when every
         # test passes.

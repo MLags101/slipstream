@@ -22,7 +22,7 @@ import traceback
 from pathlib import Path
 
 from . import foamcase, geometry, meshimport, post
-from .foamenv import OPENFOAM, find_openfoam
+from .foamenv import OPENFOAM, env, find_openfoam
 
 import signal
 
@@ -325,7 +325,7 @@ class Runner:
         merged back (reconstructParMesh), so checkMesh, topoSet and the solve's
         own decomposePar see exactly the serial layout. A failed snappy is
         retried without prism layers; if MPI never got snappy started, the mesh
-        is built on one core instead. WINDTUNNEL_SERIAL_MESH=1 forces serial."""
+        is built on one core instead. SLIPSTREAM_SERIAL_MESH=1 forces serial."""
         self.update(run_id, status="meshing", progress=0.11,
                     message="Extracting surface features")
         self._foam(case, "surfaceFeatureExtract", "log.surfaceFeatureExtract", run_id)
@@ -334,7 +334,7 @@ class Runner:
         self._foam(case, "blockMesh", "log.blockMesh", run_id)
 
         n = foamcase.NPROCS
-        if n > 1 and not os.environ.get("WINDTUNNEL_SERIAL_MESH"):
+        if n > 1 and not env("SERIAL_MESH"):
             parallel = f"mpirun -np {n} snappyHexMesh -parallel -overwrite"
             self._foam(case, "decomposePar -force", "log.decomposePar.mesh", run_id)
             self.update(run_id, progress=0.17,

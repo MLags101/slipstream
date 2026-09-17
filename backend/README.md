@@ -1,4 +1,4 @@
-# WindTunnel backend
+# Slipstream backend
 
 FastAPI backend that turns an uploaded STL into an OpenFOAM (simpleFoam, kOmegaSST)
 external-aero analysis. See `docs/CONTRACT.md` at the repo root for the API contract.

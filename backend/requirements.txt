@@ -1,4 +1,4 @@
-# WindTunnel backend. OpenFOAM is a separate install (see README).
+# Slipstream backend. OpenFOAM is a separate install (see README).
 fastapi
 uvicorn[standard]
 python-multipart

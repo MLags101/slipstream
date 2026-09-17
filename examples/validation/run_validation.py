@@ -1,4 +1,4 @@
-"""Submit the validation cases to a running WindTunnel backend as mesh-
+"""Submit the validation cases to a running Slipstream backend as mesh-
 independence sweeps, wait for them, and save the results.
 
     backend/.venv/bin/python examples/validation/make_models.py

@@ -39,7 +39,7 @@ export function Sidebar({
     <aside className="sidebar">
       <div className="sidebar-head">
         <div className="brand">
-          <span className="brand-mark">⌁</span> WindTunnel
+          <span className="brand-mark">⌁</span> Slipstream
         </div>
         <button className="btn btn-primary btn-block" onClick={onNew}>
           + New run

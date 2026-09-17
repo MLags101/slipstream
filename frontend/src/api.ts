@@ -1,5 +1,5 @@
 /**
- * Typed client for the WindTunnel backend REST API.
+ * Typed client for the Slipstream backend REST API.
  * Mirrors docs/CONTRACT.md exactly. All requests go through the Vite dev
  * proxy: /api -> http://localhost:8000.
  */

@@ -42,11 +42,11 @@ def case(tmp_path):
     return tmp_path
 
 
-def mesh(case, foam, monkeypatch, serial_env=False):
+def mesh(case, foam, monkeypatch, serial_env=False, env_name="SLIPSTREAM_SERIAL_MESH"):
+    for name in ("SLIPSTREAM_SERIAL_MESH", "WINDTUNNEL_SERIAL_MESH"):
+        monkeypatch.delenv(name, raising=False)
     if serial_env:
-        monkeypatch.setenv("WINDTUNNEL_SERIAL_MESH", "1")
-    else:
-        monkeypatch.delenv("WINDTUNNEL_SERIAL_MESH", raising=False)
+        monkeypatch.setenv(env_name, "1")
     runner = Runner.__new__(Runner)  # no data dir, no worker thread
     messages = []
     runner.update = lambda run_id, **kw: messages.append(kw.get("message"))
@@ -101,6 +101,12 @@ def test_serial_env_keeps_the_old_path(case, monkeypatch):
     mesh(case, foam, monkeypatch, serial_env=True)
     assert foam.calls == ["surfaceFeatureExtract", "blockMesh", SERIAL, SERIAL]
     assert not layers_on(case)
+
+
+def test_pre_rename_serial_env_name_still_works(case, monkeypatch):
+    foam = FakeFoam()
+    mesh(case, foam, monkeypatch, serial_env=True, env_name="WINDTUNNEL_SERIAL_MESH")
+    assert foam.calls == ["surfaceFeatureExtract", "blockMesh", SERIAL]
 
 
 # -- re-solve: reuse another run's mesh ---------------------------------------
