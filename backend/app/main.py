@@ -238,6 +238,28 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         else:
             cfg.pop("refinement")
 
+    layers = cfg.get("layers")
+    if layers is not None:
+        allowed = set(foamcase.LAYER_LIMITS) | {"ground"}
+        if not isinstance(layers, dict) or set(layers) - allowed:
+            raise HTTPException(
+                422, "layers must be an object with any of: "
+                     + ", ".join(sorted(allowed)))
+        if "ground" in layers and not isinstance(layers["ground"], bool):
+            raise HTTPException(422, "layers.ground must be true or false")
+        for key, (lo, hi) in foamcase.LAYER_LIMITS.items():
+            val = layers.get(key)
+            if val is None:
+                continue
+            if not (_num(val) and lo <= val <= hi):
+                raise HTTPException(
+                    422, f"layers.{key} must be a number in [{lo:g}, {hi:g}]")
+        if layers.get("ground") and not cfg.get("ground_plane"):
+            raise HTTPException(
+                422, "layers.ground requires ground_plane")
+        if not layers:
+            cfg.pop("layers")
+
     sweeps = {p: cfg.pop(f"{p}_sweep", None) for p in ("yaw", "pitch")}
     sweeps = {p: v for p, v in sweeps.items() if v is not None}
     if len(sweeps) > 1:
@@ -716,6 +738,9 @@ def get_group(group_id: str):
             "progress": s["progress"],
             "cd": result.get("cd") if result else None,
             "drag_N": result.get("drag_N") if result else None,
+            # Lift makes a pitch sweep a real polar (Cl vs alpha, L/D).
+            "cl": result.get("cl") if result else None,
+            "lift_N": result.get("lift_N") if result else None,
             "quality": s["config"].get("quality"),
             "mesh_cells": result.get("mesh_cells") if result else None,
         })

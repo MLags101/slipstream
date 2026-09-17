@@ -77,6 +77,12 @@ export interface RunConfig {
    * (requires `props`).
    */
   refinement?: RefinementOptions;
+  /**
+   * v8.5: prism (boundary) layer stack grown on the wall patches. These set
+   * y+, so they decide whether the wall functions are being used in their
+   * valid range. Omit for the defaults (3 layers, ratio 1.2).
+   */
+  layers?: LayerOptions;
   /** v8.4: the run solves on an imported mesh instead of meshing an STL. */
   mesh_import?: {
     filename: string;
@@ -135,6 +141,23 @@ export interface ResolveRequest {
 export interface RefinementOptions {
   long_wake?: boolean;
   prop_slipstream?: boolean;
+}
+
+/**
+ * v8.5: prism layer stack. Thicknesses are fractions of the local surface
+ * cell (snappyHexMesh relativeSizes), not absolute lengths.
+ */
+export interface LayerOptions {
+  /** Layers grown on the model. 0 disables the layer stage entirely. */
+  count?: number;
+  /** Growth ratio between consecutive layers. */
+  expansion?: number;
+  /** Outermost layer thickness, as a fraction of the surface cell. */
+  final_thickness?: number;
+  /** Thinnest acceptable layer; snappy drops the stack below this. */
+  min_thickness?: number;
+  /** Also grow layers on the floor. Requires ground_plane. */
+  ground?: boolean;
 }
 
 /** What the backend actually meshed for `config.refinement`. */
@@ -233,6 +256,16 @@ export interface RunResult {
     ok?: boolean;
     rating?: "good" | "fair" | "poor";
   };
+  /**
+   * v8.5: y+ per wall patch, measured on the converged solution. Undefined or
+   * null for runs solved before this existed, or when postProcess failed.
+   */
+  y_plus?: Record<string, { min: number; max: number; average: number }> | null;
+  /**
+   * The model patch's average y+ bucketed against the wall-function range:
+   * "low" under 30, "ok" to 300, "high" above.
+   */
+  y_plus_verdict?: "low" | "ok" | "high" | null;
 }
 
 /** GET /api/runs/{id} */
@@ -315,6 +348,9 @@ export interface GroupMember {
   /** null until that member is done. */
   cd: number | null;
   drag_N: number | null;
+  /** v8.5: lift, so a pitch sweep reads as a polar. null until done. */
+  cl?: number | null;
+  lift_N?: number | null;
   /** v8: mesh quality of this member (meaningful for mesh sweeps). */
   quality?: Quality;
   /** v8: cell count once done. */

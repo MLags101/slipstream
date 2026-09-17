@@ -8,6 +8,12 @@ import { api, type Quality, type RunConfig, type StlUnit } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
 import { nameFromFilename, formatInt } from "../lib/format";
 import { defaultPropPlacements } from "../lib/geometry";
+import {
+  CUSTOM_PRESET,
+  LAYER_DEFAULTS,
+  LAYER_LIMITS,
+  LAYER_PRESETS,
+} from "../lib/layers";
 
 /** Keep a nudged angle in (-180, 180] so the inputs stay readable. */
 function wrapDeg(v: number): number {
@@ -84,6 +90,17 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
   const [propSlipstream, setPropSlipstream] = useState(false);
   // Slipstream refinement follows the prop disks, so it needs them on.
   const slipstreamOn = propsEnabled && propSlipstream;
+  // Prism (boundary) layers. A preset id, or CUSTOM_PRESET with explicit
+  // numbers. "standard" reproduces the backend defaults, so it sends nothing.
+  const [layerPreset, setLayerPreset] = useState("standard");
+  const [layerCount, setLayerCount] = useState(String(LAYER_DEFAULTS.count));
+  const [layerExpansion, setLayerExpansion] = useState(
+    String(LAYER_DEFAULTS.expansion),
+  );
+  const [layerFinal, setLayerFinal] = useState(
+    String(LAYER_DEFAULTS.final_thickness),
+  );
+  const [groundLayers, setGroundLayers] = useState(false);
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -712,6 +729,34 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
       }
       refAreaCm2 = ra;
     }
+    // Prism layers: the chosen preset, or the custom numbers. "standard" and
+    // no floor layers send nothing at all, so the request matches what older
+    // versions of the app sent.
+    let layers: RunConfig["layers"];
+    if (layerPreset === CUSTOM_PRESET) {
+      const entries: [keyof typeof LAYER_LIMITS, string][] = [
+        ["count", layerCount],
+        ["expansion", layerExpansion],
+        ["final_thickness", layerFinal],
+      ];
+      const custom: Record<string, number> = {};
+      for (const [key, raw] of entries) {
+        const v = parseFloat(raw);
+        const [lo, hi] = LAYER_LIMITS[key];
+        if (!Number.isFinite(v) || v < lo || v > hi) {
+          setSubmitError(
+            `Layer ${key.replace("_", " ")} must be a number between ${lo} and ${hi}`,
+          );
+          return;
+        }
+        custom[key] = v;
+      }
+      layers = custom;
+    } else {
+      const preset = LAYER_PRESETS.find((p) => p.id === layerPreset);
+      layers = preset?.settings ? { ...preset.settings } : undefined;
+    }
+    if (groundPlane && groundLayers) layers = { ...(layers ?? {}), ground: true };
     const config: RunConfig = {
       name: name.trim() || nameFromFilename(file.name),
       unit,
@@ -729,6 +774,7 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
       ...(roll ? { roll_deg: roll } : {}),
       ...(groundPlane ? { ground_plane: true } : {}),
       ...(symmetry ? { symmetry: true } : {}),
+      ...(layers ? { layers } : {}),
       ...(longWake || slipstreamOn
         ? {
             refinement: {
@@ -1350,6 +1396,90 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
                 more cells and a longer run; the slipstream zones tilt with the
                 wind speed and thrust
               </span>
+            )}
+          </div>
+          <div className="field">
+            <span className="field-label">Boundary layers</span>
+            <select
+              value={layerPreset}
+              onChange={(e) => setLayerPreset(e.target.value)}
+              disabled={!file}
+            >
+              {LAYER_PRESETS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.label}
+                </option>
+              ))}
+              <option value={CUSTOM_PRESET}>Custom…</option>
+            </select>
+            {layerPreset !== CUSTOM_PRESET && (
+              <span className="config-note">
+                {LAYER_PRESETS.find((p) => p.id === layerPreset)?.hint}
+              </span>
+            )}
+            {layerPreset === CUSTOM_PRESET && (
+              <>
+                <div className="layer-custom">
+                  <label className="field">
+                    <span className="field-label">Layers</span>
+                    <input
+                      type="number"
+                      className="mono"
+                      value={layerCount}
+                      min={LAYER_LIMITS.count[0]}
+                      max={LAYER_LIMITS.count[1]}
+                      step={1}
+                      onChange={(e) => setLayerCount(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Expansion ratio</span>
+                    <input
+                      type="number"
+                      className="mono"
+                      value={layerExpansion}
+                      min={LAYER_LIMITS.expansion[0]}
+                      max={LAYER_LIMITS.expansion[1]}
+                      step="any"
+                      onChange={(e) => setLayerExpansion(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Final layer thickness</span>
+                    <input
+                      type="number"
+                      className="mono"
+                      value={layerFinal}
+                      min={LAYER_LIMITS.final_thickness[0]}
+                      max={LAYER_LIMITS.final_thickness[1]}
+                      step="any"
+                      onChange={(e) => setLayerFinal(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <span className="config-note">
+                  Thickness is a fraction of the surface cell, not a length.
+                  More layers and a thinner final layer lower y+; the run
+                  reports the y+ it actually achieved.
+                </span>
+              </>
+            )}
+            {groundPlane && (
+              <>
+                <label className="check-field">
+                  <input
+                    type="checkbox"
+                    checked={groundLayers}
+                    onChange={(e) => setGroundLayers(e.target.checked)}
+                    disabled={!file}
+                  />
+                  <span>Also grow layers on the floor</span>
+                </label>
+                <span className="config-note">
+                  Only worth it with a static floor — a rolling road moves with
+                  the air, so it has no boundary layer to resolve.
+                </span>
+              </>
             )}
           </div>
           <label className="field">

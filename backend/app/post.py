@@ -155,6 +155,57 @@ def drag_breakdown(case_dir: str | Path) -> tuple[float | None, float | None]:
             float(np.mean(forces["viscous_x"][win])))
 
 
+# yPlus function object summary line, e.g.
+#     patch model y+ : min = 0.49652908, max = 172.00955, average = 13.151267
+_YPLUS_RE = re.compile(
+    r"^\s*patch\s+(\S+)\s+y\+\s*:\s*min\s*=\s*(\S+?),\s*"
+    r"max\s*=\s*(\S+?),\s*average\s*=\s*(\S+)\s*$", re.MULTILINE)
+
+# Wall functions model the near-wall layer instead of resolving it, and are
+# only valid when the first cell center sits in the log-law region. Below
+# Y_PLUS_LOW the layers are too fine for the wall function but too coarse to
+# resolve the viscous sublayer; above Y_PLUS_HIGH the first cell has swallowed
+# the boundary layer entirely.
+Y_PLUS_LOW = 30.0
+Y_PLUS_HIGH = 300.0
+
+
+def parse_y_plus(y_plus_log: str | Path) -> dict[str, dict] | None:
+    """Per-patch {min, max, average} y+ from a `postProcess -func yPlus` log.
+    Returns None when the log is missing or has no summary lines (an older run,
+    or a postProcess that failed) so callers can treat y+ as simply unknown."""
+    path = Path(y_plus_log)
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return None
+    out: dict[str, dict] = {}
+    for name, lo, hi, avg in _YPLUS_RE.findall(text):
+        try:
+            vals = {"min": float(lo), "max": float(hi), "average": float(avg)}
+        except ValueError:
+            continue
+        if all(math.isfinite(v) for v in vals.values()):
+            out[name] = vals
+    return out or None
+
+
+def y_plus_verdict(y_plus: dict[str, dict] | None) -> str | None:
+    """One word for the model patch's average y+: "low", "ok" or "high".
+    Drives the wall-function warning in the UI."""
+    if not y_plus:
+        return None
+    entry = y_plus.get("model") or next(iter(y_plus.values()))
+    avg = entry.get("average")
+    if avg is None or not math.isfinite(avg):
+        return None
+    if avg < Y_PLUS_LOW:
+        return "low"
+    if avg > Y_PLUS_HIGH:
+        return "high"
+    return "ok"
+
+
 def parse_mesh_quality(check_log: str | Path) -> dict:
     """Pull max non-orthogonality, max skewness and the OK/failed verdict from a
     checkMesh log. Returns {} if the log is missing/unparsable."""
@@ -215,6 +266,7 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     ref_area = float(ref_cm2) / 1e4 if ref_cm2 else frontal
     qdyn = 0.5 * rho * u * u * ref_area
     drag_pressure, drag_viscous = drag_breakdown(case_dir)
+    y_plus = parse_y_plus(Path(case_dir) / "log.yPlus")
 
     # Half-model (symmetry) solve: the forceCoeffs/forces cover only the +Y
     # half, so double the streamwise/vertical loads to recover the full model.
@@ -254,6 +306,10 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
         "converged": bool(cd_std <= CONVERGED_REL_TOL * abs(cd)) if cd else False,
         "reynolds": reynolds,
         "mesh_quality": parse_mesh_quality(Path(case_dir) / "log.checkMesh"),
+        # None on runs from before y+ was reported, and on any run whose
+        # postProcess failed — the UI omits the panel rather than guessing.
+        "y_plus": y_plus,
+        "y_plus_verdict": y_plus_verdict(y_plus),
         "stopped_early": bool(stopped_early),
         "symmetry": symmetry,
     }

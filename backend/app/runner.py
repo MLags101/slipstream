@@ -572,6 +572,14 @@ class Runner:
         # the case). Drop it immediately.
         foamcase.free_processor_dirs(case)
 
+        # y+ on the wall patches: the one number that says whether the prism
+        # layers put the first cell where the wall functions are valid. Cheap
+        # (one time step, serial) and non-fatal — a run without it just
+        # reports y+ as unknown.
+        self.update(run_id, message="Measuring y+ on the walls")
+        self._foam(case, "simpleFoam -postProcess -func yPlus -latestTime",
+                   "log.yPlus", run_id, check=False)
+
         # ---- postprocessing (0.9 - 1.0) -----------------------------------
         self.update(run_id, progress=0.94, message="Building visualization data")
         rho = float(config.get("rho") or 1.225)

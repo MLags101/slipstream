@@ -7,6 +7,7 @@ import {
   formatInt,
 } from "../lib/format";
 import { downloadText, resultToCsv, slugify } from "../lib/download";
+import { yPlusRows, yPlusText } from "../lib/layers";
 
 // Split-bar segment colors (match the chart palette).
 const C_PRESSURE = "#3987e5";
@@ -39,6 +40,14 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
         ]
       : []),
     { label: "Mesh cells", value: formatInt(result.mesh_cells) },
+    // One row per wall patch, model first. Absent on runs solved before y+
+    // was measured, which is most older runs.
+    ...yPlusRows(result).map((r) => ({
+      label: `y+ ${r.patch} (avg)`,
+      value: `${r.average.toFixed(r.average < 30 ? 1 : 0)} (${r.min.toFixed(
+        1,
+      )}–${r.max.toFixed(0)})`,
+    })),
     { label: "Runtime", value: formatDuration(result.runtime_s) },
     {
       label: "Cd std (last 20%)",
@@ -84,6 +93,14 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
         "STL rather than too coarse a mesh; repair the geometry into one watertight " +
         "solid and re-run.",
     );
+
+  // y+ outside the wall-function band is the most common reason a result is
+  // confidently wrong, so it belongs with the warnings rather than buried in
+  // the stat grid. An in-band y+ needs no warning.
+  if (result.y_plus_verdict === "low" || result.y_plus_verdict === "high") {
+    const t = yPlusText(result);
+    if (t) warnings.push(t);
+  }
 
   // v2 drag breakdown — null (or absent) for runs solved before the feature.
   const dragP = result.drag_pressure_N;

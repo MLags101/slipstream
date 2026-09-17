@@ -23,6 +23,18 @@ export function downloadDataUrl(filename: string, dataUrl: string): void {
 const num = (v: number | null | undefined, d = 4) =>
   v == null ? "" : Number(v).toFixed(d);
 
+/**
+ * Lift-to-drag ratio, or null when it would be meaningless (missing data, or
+ * a Cd of zero). Exported for the sweep table, which shows the same column.
+ */
+export function liftToDrag(
+  cl: number | null | undefined,
+  cd: number | null | undefined,
+): number | null {
+  if (cl == null || cd == null || cd === 0) return null;
+  return cl / cd;
+}
+
 /** A run's results as a two-column key,value CSV. */
 export function resultToCsv(name: string, r: RunResult): string {
   const rows: [string, string][] = [
@@ -53,9 +65,18 @@ export function sweepToCsv(
   param: string,
   members: (GroupMember & { angle?: number })[],
 ): string {
-  const header = `${param}_deg,cd,drag_N`;
+  const header = `${param}_deg,cd,cl,l_over_d,drag_N,lift_N`;
   const body = members
-    .map((m) => `${m.angle ?? m.yaw_deg},${num(m.cd)},${num(m.drag_N)}`)
+    .map((m) =>
+      [
+        m.angle ?? m.yaw_deg,
+        num(m.cd),
+        num(m.cl),
+        num(liftToDrag(m.cl, m.cd)),
+        num(m.drag_N),
+        num(m.lift_N),
+      ].join(","),
+    )
     .join("\n");
   return `${header}\n${body}\n`;
 }

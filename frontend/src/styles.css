@@ -1950,3 +1950,15 @@ body {
   margin-top: 12px;
   white-space: pre-wrap;
 }
+
+/* Custom prism layer inputs: three short number fields on one row. */
+.layer-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+.layer-custom .field {
+  flex: 1 1 110px;
+  gap: 4px;
+}

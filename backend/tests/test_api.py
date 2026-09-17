@@ -420,3 +420,38 @@ def test_rerun_of_an_imported_run_copies_its_mesh(finished_run, monkeypatch):
     assert mesh_src == rd / "mesh_import" / "constant" / "polyMesh" and c["mesh_import"]
     (rd / "mesh_import" / "constant" / "polyMesh" / "owner").unlink()
     assert client.post(f"/api/runs/{rid}/rerun").status_code == 410
+
+
+# --- v8.5 prism layers ------------------------------------------------------
+
+@pytest.mark.parametrize("layers, fragment", [
+    ("three", "layers must be an object"),
+    ({"nLayers": 3}, "layers must be an object"),
+    ({"count": 20}, "layers.count"),
+    ({"count": -1}, "layers.count"),
+    ({"expansion": 3.0}, "layers.expansion"),
+    ({"final_thickness": 0}, "layers.final_thickness"),
+    ({"ground": "yes"}, "layers.ground must be true or false"),
+    ({"ground": True}, "requires ground_plane"),
+])
+def test_layer_validation(monkeypatch, layers, fragment):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse",
+                     "layers": layers})
+    assert res.status_code == 422, res.text
+    assert fragment in res.json()["detail"]
+
+
+def test_layers_are_stored_on_the_run(monkeypatch):
+    import json as _json
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    monkeypatch.setattr(main.runner, "submit", lambda *a, **k: None)
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse",
+                     "ground_plane": True,
+                     "layers": {"count": 6, "expansion": 1.15, "ground": True}})
+    assert res.status_code == 201, res.text
+    # submit is stubbed, so the run never reaches the runner's state; read the
+    # config the API persisted for it instead.
+    rd = main.DATA_DIR / res.json()["id"]
+    cfg = _json.loads((rd / "config.json").read_text())
+    assert cfg["layers"] == {"count": 6, "expansion": 1.15, "ground": True}

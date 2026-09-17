@@ -43,6 +43,50 @@ def domain_bounds(model: dict, ground: bool = False,
 
 REFINEMENT_OPTIONS = ("long_wake", "prop_slipstream")
 
+# Prism (boundary) layers grown on the wall patches by snappyHexMesh. These
+# are what set y+, so they decide whether the wall functions are being used
+# inside their valid range. relativeSizes is on, so `final_thickness` and
+# `min_thickness` are fractions of the local surface cell size.
+LAYER_DEFAULTS = {
+    "count": 3,
+    "expansion": 1.2,
+    "final_thickness": 0.3,
+    "min_thickness": 0.1,
+    "ground": False,
+}
+LAYER_LIMITS = {
+    "count": (0, 12),
+    "expansion": (1.0, 2.0),
+    "final_thickness": (0.05, 1.0),
+    "min_thickness": (0.001, 0.5),
+}
+
+
+def layer_settings(config: dict) -> dict:
+    """Merge config["layers"] over LAYER_DEFAULTS, clamped to LAYER_LIMITS.
+    Absent or empty config reproduces the pre-v8.4 hard-coded layer stack, so
+    old runs and reruns are unchanged."""
+    cfg = config.get("layers") or {}
+    out = dict(LAYER_DEFAULTS)
+    for key, (lo, hi) in LAYER_LIMITS.items():
+        if cfg.get(key) is None:
+            continue
+        val = float(cfg[key])
+        out[key] = min(max(val, lo), hi)
+    out["count"] = int(round(out["count"]))
+    # minThickness above finalLayerThickness makes snappy discard the stack.
+    out["min_thickness"] = min(out["min_thickness"], out["final_thickness"])
+    out["ground"] = bool(cfg.get("ground", LAYER_DEFAULTS["ground"]))
+    return out
+
+
+def layer_entries(patches: list[str], count: int) -> str:
+    """The `layers { ... }` body of addLayersControls: one entry per patch."""
+    return "".join(
+        f"        {name}\n        {{\n"
+        f"            nSurfaceLayers {count};\n        }}\n"
+        for name in patches)
+
 # Long wake: the level-2 box reaches this many body lengths behind the model
 # (default 1.5L), followed by a level-1 box out to LONG_WAKE_L1_L.
 LONG_WAKE_L2_L = 4.0
@@ -209,6 +253,12 @@ def compute_params(model: dict, config: dict,
             props_m, U0, rho, cell, config["quality"], q["surf_max"])
     extra_geometry, extra_regions = _refinement_dicts(boxes, cylinders)
 
+    # Prism layers. The ground only gets them on request: a rolling road has
+    # no boundary layer to resolve, so layers there are wasted cells unless
+    # the user asked for a static floor.
+    lay = layer_settings(config)
+    layer_patches = ["model"] + (["ground"] if ground and lay["ground"] else [])
+
     # Point near inlet corner, guaranteed outside the model & refinement box.
     # With symmetry, dy0 == 0, so liy = 0.677*cell is a positive point just
     # inside the +Y half domain (far upstream, open fluid — not on the model).
@@ -251,7 +301,11 @@ def compute_params(model: dict, config: dict,
         "featLevel": str(q["surf_min"]),
         "maxGlobalCells": str(q["max_global_cells"]),
         "nprocs": str(NPROCS),
-        "doLayers": "true",
+        "doLayers": "true" if lay["count"] > 0 else "false",
+        "layerEntries": layer_entries(layer_patches, lay["count"]),
+        "expansionRatio": fmt(lay["expansion"]),
+        "finalLayerThickness": fmt(lay["final_thickness"]),
+        "minThickness": fmt(lay["min_thickness"]),
         "extraGeometry": extra_geometry,
         "extraRegions": extra_regions,
         # convenience for the runner (non-string: not template keys)

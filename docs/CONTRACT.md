@@ -498,3 +498,49 @@ symmetric.
 ### Trim weight
 
 New run no longer pre-fills the craft weight; a trim solve can't start until one is entered.
+
+## v8.5: prism layer controls, y+ report, polar sweeps
+
+### Prism layers
+
+`config.layers` tunes the boundary-layer stack snappyHexMesh grows on the wall patches.
+All keys optional; omitting the object reproduces the pre-v8.5 hard-coded stack, so old
+runs and reruns mesh identically.
+
+| key | range | default | meaning |
+| --- | --- | --- | --- |
+| `count` | 0–12 | 3 | layers on the model; `0` sets `addLayers false` |
+| `expansion` | 1.0–2.0 | 1.2 | growth ratio between layers |
+| `final_thickness` | 0.05–1.0 | 0.3 | outermost layer, as a fraction of the surface cell |
+| `min_thickness` | 0.001–0.5 | 0.1 | thinnest acceptable layer (clamped ≤ `final_thickness`) |
+| `ground` | bool | false | also grow layers on the `ground` patch; requires `ground_plane` |
+
+`relativeSizes` stays true, so the thicknesses are fractions of the local surface cell, not
+lengths. `foamcase.layer_settings` clamps out-of-range numbers rather than rejecting them;
+the API rejects unknown keys, a non-bool `ground`, and `ground` without `ground_plane` (422).
+The UI offers four presets (none / 3 / 6 / 10 layers) plus custom numbers.
+
+Verified by meshing a 0.30 × 0.16 × 0.10 m box at coarse: 0 layers → 173,564 cells, mesh OK;
+6 layers → 272,728 cells, 4.41 layers average over 85.2% of the model; 6 + floor → the
+`ground` patch got its full 6 layers over 89.6%. checkMesh passed on all three.
+
+### y+ report
+
+After reconstructing fields the runner runs `simpleFoam -postProcess -func yPlus -latestTime`
+into `log.yPlus` (non-fatal). `post.parse_y_plus` reads the per-patch
+`patch <name> y+ : min = , max = , average = ` lines into
+`result.y_plus[patch] = {min, max, average}`, and `post.y_plus_verdict` buckets the model
+patch's average against the wall-function band (`Y_PLUS_LOW` 30, `Y_PLUS_HIGH` 300) as
+`"low" | "ok" | "high"`. Both are `null` for runs solved before v8.5 or when postProcess
+failed; the UI then omits the readout rather than guessing.
+
+The results panel lists y+ per patch and, when the verdict is `low` or `high`, raises a
+warning explaining which way to move the layer settings. This is the number that explains
+the validation errors in VALIDATION.md, so it is reported on every run rather than on request.
+
+### Polar sweeps
+
+`GET /api/groups/{id}` members now carry `cl` and `lift_N`. For yaw/pitch sweeps (not mesh
+sweeps or trim) the sweep panel adds Cl-vs-angle and L/D-vs-angle charts and Cl / L/D table
+columns, and the CSV export gains `cl,l_over_d,lift_N`. Members from before v8.5 have `cl`
+undefined, and such sweeps keep the old Cd-only layout.

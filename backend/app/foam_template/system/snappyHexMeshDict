@@ -95,15 +95,11 @@ addLayersControls
 
     layers
     {
-        model
-        {
-            nSurfaceLayers 3;
-        }
-    }
+${layerEntries}    }
 
-    expansionRatio      1.2;
-    finalLayerThickness 0.3;
-    minThickness        0.1;
+    expansionRatio      ${expansionRatio};
+    finalLayerThickness ${finalLayerThickness};
+    minThickness        ${minThickness};
     nGrow               0;
 
     featureAngle        60;

@@ -123,5 +123,13 @@ the published reference area of 0.112 m², so the geometry and coefficients line
   Cd averaged over the last 20% of iterations and its spread.
 - **The Ahmed body is modeled without its four support stilts**, and the app places the
   floor 12% of the body height (35 mm) below it instead of the experiment's 50 mm.
-- **Wall functions, not resolved boundary layers.** Three prism layers keep meshes small
-  enough for a laptop, which limits skin-friction accuracy.
+- **Wall functions, not resolved boundary layers.** The default three prism layers keep
+  meshes small enough for a laptop, which limits skin-friction accuracy. Since v8.5 the
+  layer stack is adjustable (up to 12 layers, with the option to grow them on the floor
+  too), and every run reports the y+ it actually achieved on each wall patch, with a
+  warning when it falls outside the 30–300 band the wall functions are valid in. That is
+  the number behind most of the errors above: the Ahmed body's floor ran at y+ ≈ 3000, and
+  the Re = 1×10⁵ sphere at y+ ≈ 1.5 — opposite ends of the same problem. Raising or
+  lowering y+ into the band is now something you can do from the run setup, but note that
+  it changes how the wall is modeled, not whether the turbulence model can predict
+  transition.

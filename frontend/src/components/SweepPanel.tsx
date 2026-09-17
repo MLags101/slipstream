@@ -4,12 +4,13 @@ import { usePoll } from "../hooks/usePoll";
 import { isTerminal, StatusPill } from "./StatusPill";
 import { LineChart } from "./LineChart";
 import { formatCoeff, formatForce } from "../lib/format";
-import { downloadText, sweepToCsv, slugify } from "../lib/download";
+import { downloadText, sweepToCsv, slugify, liftToDrag } from "../lib/download";
 import { formatPct, meshSweepHeadline } from "../lib/meshSweep";
 
 // Same categorical palette as the convergence charts.
 const C_BLUE = "#3987e5";
 const C_AQUA = "#199e70";
+const C_AMBER = "#c9871f";
 
 interface Props {
   groupId: string;
@@ -68,6 +69,9 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
     : done;
   const memberLabel = (m: (typeof group.runs)[number]) =>
     isMesh ? (m.quality ?? "—") : `${angleOf(m)}°`;
+  // Runs from before lift was reported per member have cl undefined; their
+  // sweeps keep the old Cd-only layout rather than charting a flat line.
+  const hasLift = chartDone.some((m) => m.cl != null);
 
   return (
     <section className="panel">
@@ -173,6 +177,40 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
                 },
               ]}
             />
+            {/* An angle sweep with lift is a polar: Cl vs alpha and L/D are
+                what you actually read off it. Mesh sweeps hold the angle
+                fixed, so lift there is a constant and not worth a chart. */}
+            {!isMesh && hasLift && (
+              <LineChart
+                title={`Cl vs ${param}`}
+                xLabel={xLabel}
+                markers
+                series={[
+                  {
+                    name: "Cl",
+                    color: C_AMBER,
+                    x: chartDone.map((m) => xOf(m)),
+                    y: chartDone.map((m) => m.cl as number),
+                  },
+                ]}
+              />
+            )}
+            {!isMesh && hasLift && (
+              <LineChart
+                title={`Lift-to-drag vs ${param}`}
+                xLabel={xLabel}
+                markers
+                series={[
+                  {
+                    name: "L/D",
+                    color: C_AQUA,
+                    x: chartDone.map((m) => xOf(m)),
+                    // LineChart drops non-finite points.
+                    y: chartDone.map((m) => liftToDrag(m.cl, m.cd) ?? NaN),
+                  },
+                ]}
+              />
+            )}
             <LineChart
               title={isMesh ? "Drag vs mesh size" : `Drag vs ${param}`}
               xLabel={xLabel}
@@ -195,6 +233,8 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
                   <th>{isMesh ? "mesh" : param}</th>
                   {isMesh && <th>cells</th>}
                   <th>Cd</th>
+                  {!isMesh && hasLift && <th>Cl</th>}
+                  {!isMesh && hasLift && <th>L/D</th>}
                   <th>drag</th>
                   {isMesh && <th>Cd change</th>}
                 </tr>
@@ -211,6 +251,16 @@ export function SweepPanel({ groupId, activeRunId, onSelectRun }: Props) {
                     <td className="mono">
                       {m.cd !== null ? formatCoeff(m.cd) : "—"}
                     </td>
+                    {!isMesh && hasLift && (
+                      <td className="mono">
+                        {m.cl != null ? formatCoeff(m.cl) : "—"}
+                      </td>
+                    )}
+                    {!isMesh && hasLift && (
+                      <td className="mono">
+                        {liftToDrag(m.cl, m.cd)?.toFixed(2) ?? "—"}
+                      </td>
+                    )}
                     <td className="mono">
                       {m.drag_N !== null ? formatForce(m.drag_N) : "—"}
                     </td>
