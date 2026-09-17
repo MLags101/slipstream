@@ -49,6 +49,31 @@ CASES = [
         "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
                       "25° slant at 60 m/s"},
     },
+    # v8.5 prism layer experiment. The mesh sweep above settled at medium, and
+    # its floor ran at y+ ~3000 — far outside the 30-300 band the wall
+    # functions are valid in. These two runs hold everything else fixed and
+    # change only the layer stack, so the Cd difference is attributable.
+    {
+        "name": "ahmed_25_medium_baseline",
+        "stl": "ahmed_25.stl",
+        "single": True,
+        "config": {"name": "Validation: Ahmed 25°, medium, default layers",
+                   "unit": "mm", "wind_speed": 60, "quality": "medium",
+                   "symmetry": True, "ground_plane": True, "ground": "static"},
+        "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
+                      "25° slant at 60 m/s"},
+    },
+    {
+        "name": "ahmed_25_medium_floorlayers",
+        "stl": "ahmed_25.stl",
+        "single": True,
+        "config": {"name": "Validation: Ahmed 25°, medium, 6 layers + floor",
+                   "unit": "mm", "wind_speed": 60, "quality": "medium",
+                   "symmetry": True, "ground_plane": True, "ground": "static",
+                   "layers": {"count": 6, "ground": True}},
+        "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
+                      "25° slant at 60 m/s"},
+    },
 ]
 
 
@@ -63,13 +88,28 @@ def post_run(api: str, stl: Path, config: dict) -> str:
     return json.load(urllib.request.urlopen(req))["id"]
 
 
-def find_existing(api: str, name: str) -> str | None:
-    """Reattach to a sweep already submitted under this name (the backend
-    keeps refining on its own if this script stops)."""
+def find_existing(api: str, name: str, single: bool = False) -> str | None:
+    """Reattach to a run already submitted under this name (the backend keeps
+    going on its own if this script stops)."""
+    want = name if single else f"{name} @ coarse mesh"
     for r in get(api, "/runs"):
-        if r["name"] == f"{name} @ coarse mesh" and r["status"] != "cancelled":
+        if r["name"] == want and r["status"] != "cancelled":
             return r["id"]
     return None
+
+
+def wait_for_run(api: str, run_id: str) -> dict:
+    """Poll a single (non-sweep) run to completion."""
+    last = None
+    while True:
+        detail = get(api, f"/runs/{run_id}")
+        if detail["status"] != last:
+            print(time.strftime("%H:%M:%S"), detail["status"],
+                  detail.get("message", ""), flush=True)
+            last = detail["status"]
+        if detail["status"] in ("done", "error", "cancelled"):
+            return detail
+        time.sleep(30)
 
 
 def get(api: str, path: str) -> dict:
@@ -102,9 +142,16 @@ def main() -> None:
         if args.only and case["name"] != args.only:
             continue
         print(f"== {case['name']}", flush=True)
-        first = find_existing(args.api, case["config"]["name"]) or post_run(
+        single = case.get("single", False)
+        first = find_existing(args.api, case["config"]["name"], single) or post_run(
             args.api, HERE / case["stl"], case["config"])
-        group = wait_for_group(args.api, first)
+        if single:
+            detail = wait_for_run(args.api, first)
+            group = {"mesh": None,
+                     "runs": [{"id": first, "quality": case["config"]["quality"],
+                               "status": detail["status"]}]}
+        else:
+            group = wait_for_group(args.api, first)
         members = []
         for m in group["runs"]:
             detail = get(args.api, f"/runs/{m['id']}")
@@ -119,6 +166,10 @@ def main() -> None:
                 "cd_std_last20pct": res.get("cd_std_last20pct"),
                 "drag_pressure_N": res.get("drag_pressure_N"),
                 "drag_viscous_N": res.get("drag_viscous_N"),
+                # v8.5: the y+ the mesh actually achieved, per wall patch.
+                "y_plus": res.get("y_plus"),
+                "y_plus_verdict": res.get("y_plus_verdict"),
+                "layers": case["config"].get("layers"),
                 "error": detail.get("error"),
             })
         # Re-read before writing: another invocation (e.g. --only) may have

@@ -292,5 +292,112 @@
     "error": null
    }
   ]
+ },
+ "ahmed_25_medium_baseline": {
+  "config": {
+   "name": "Validation: Ahmed 25\u00b0, medium, default layers",
+   "unit": "mm",
+   "wind_speed": 60,
+   "quality": "medium",
+   "symmetry": true,
+   "ground_plane": true,
+   "ground": "static"
+  },
+  "reference": {
+   "cd": 0.285,
+   "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; 25\u00b0 slant at 60 m/s"
+  },
+  "mesh": null,
+  "members": [
+   {
+    "id": "20260917-165352-094604",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 211916,
+    "cd": 0.29713143988679236,
+    "cl": 0.4519941580754717,
+    "drag_N": 73.40002177707862,
+    "converged": true,
+    "iterations": 263,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 105.5,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.0032624854943032206,
+    "drag_pressure_N": 63.710444090566035,
+    "drag_viscous_N": 9.68957775471698,
+    "y_plus": {
+     "ground": {
+      "min": 1040.7495,
+      "max": 9368.5631,
+      "average": 3121.6543
+     },
+     "model": {
+      "min": 5.0314633,
+      "max": 317.82729,
+      "average": 80.394489
+     }
+    },
+    "y_plus_verdict": "ok",
+    "layers": null,
+    "error": null
+   }
+  ]
+ },
+ "ahmed_25_medium_floorlayers": {
+  "config": {
+   "name": "Validation: Ahmed 25\u00b0, medium, 6 layers + floor",
+   "unit": "mm",
+   "wind_speed": 60,
+   "quality": "medium",
+   "symmetry": true,
+   "ground_plane": true,
+   "ground": "static",
+   "layers": {
+    "count": 6,
+    "ground": true
+   }
+  },
+  "reference": {
+   "cd": 0.285,
+   "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; 25\u00b0 slant at 60 m/s"
+  },
+  "mesh": null,
+  "members": [
+   {
+    "id": "20260917-165608-4e83fc",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 277497,
+    "cd": 0.27013341695454546,
+    "cl": 0.38661368736363644,
+    "drag_N": 66.73073268427846,
+    "converged": true,
+    "iterations": 220,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 115.6,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.0012151848685594783,
+    "drag_pressure_N": 58.420701422727284,
+    "drag_viscous_N": 8.310031295909091,
+    "y_plus": {
+     "ground": {
+      "min": 202.71827,
+      "max": 1527.9896,
+      "average": 614.85351
+     },
+     "model": {
+      "min": 2.4535108,
+      "max": 436.83857,
+      "average": 53.543751
+     }
+    },
+    "y_plus_verdict": "ok",
+    "layers": {
+     "count": 6,
+     "ground": true
+    },
+    "error": null
+   }
+  ]
  }
 }
