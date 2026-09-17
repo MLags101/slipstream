@@ -28,6 +28,8 @@ no meshing tutorials, no cloud fees.
 - Runs **auto-stop when converged**, saving 30–40% of solve time, and the mesh is
   built on all cores
 - **Re-solve on an existing mesh**: change wind speed or prop thrust and skip meshing
+- **Bring your own mesh**: import a Gmsh, Fluent or OpenFOAM volume mesh, give each
+  boundary a role, and solve on it ([docs/MESH_IMPORT.md](docs/MESH_IMPORT.md))
 - **Mesh-independence sweep**: reruns coarse → medium → fine until drag stops
   changing, so you know the answer isn't an artifact of cell size
 - **Optional refinement where it matters**: a longer refined wake, and refined

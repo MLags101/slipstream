@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 
 import trimesh
 
-from . import foamcase, foamenv, geometry, mesh, ondemand, post, repair, trim
+from . import foamcase, foamenv, geometry, mesh, meshimport, ondemand, post, repair, trim
 from . import props as prop_detect
 from .runner import Runner
 
@@ -179,6 +179,9 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
             raise ValueError
     except (KeyError, TypeError, ValueError):
         raise HTTPException(422, "wind_speed must be a number in (0, 200) m/s")
+    # Set only by re-solve and mesh import, never by an STL upload.
+    for internal in ("mesh_from", "mesh_import", "resolve_base_name"):
+        cfg.pop(internal, None)
     cfg.setdefault("name", stl.filename or "unnamed")
     cfg.setdefault("yaw_deg", 0)
     cfg.setdefault("pitch_deg", 0)
@@ -321,12 +324,17 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
     return {"id": ids[0], "group_id": group_id, "ids": ids}
 
 
-def _submit_run(stl_bytes: bytes, cfg: dict, group_id: str | None = None) -> str:
-    """Create the run directory + initial state and enqueue it."""
+def _submit_run(stl_bytes: bytes | None, cfg: dict, group_id: str | None = None,
+                mesh_src: Path | None = None) -> str:
+    """Create the run directory + initial state and enqueue it. `mesh_src` is
+    an imported polyMesh to solve on (the STL is then extracted from it)."""
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     rd = DATA_DIR / run_id
     rd.mkdir(parents=True)
-    (rd / "model.stl").write_bytes(stl_bytes)
+    if stl_bytes is not None:
+        (rd / "model.stl").write_bytes(stl_bytes)
+    if mesh_src is not None:
+        shutil.copytree(mesh_src, rd / "mesh_import" / "constant" / "polyMesh")
     (rd / "config.json").write_text(json.dumps(cfg, indent=1))
 
     state = {
@@ -403,7 +411,7 @@ def get_run(run_id: str):
     s = _get_state(run_id)
     model = dict(s["model"]) if s["model"] else None
     if model and "bbox_m" in model:
-        model["domain_bbox_m"] = foamcase.domain_bounds(
+        model["domain_bbox_m"] = s.get("domain_bbox_m") or foamcase.domain_bounds(
             model, ground=bool(s["config"].get("ground_plane")),
             symmetry=bool(s["config"].get("symmetry")))
     # Prop disks in the prepared model frame (meters, same frame as the viz
@@ -478,6 +486,105 @@ async def detect_stl_props(stl: UploadFile, unit: str = Form("mm")):
         raise HTTPException(422, f"could not read STL: {e}")
     finally:
         tmp.unlink(missing_ok=True)
+
+
+IMPORT_DIR = DATA_DIR.parent / "imports"
+IMPORT_KEEP_S = 24 * 3600
+IMPORT_KEYS = {"import_id", "roles", "name", "wind_speed", "quality",
+               "ref_area_cm2", "rho", "nu"}
+
+
+def _prune_imports() -> None:
+    if not IMPORT_DIR.exists():
+        return
+    cutoff = time.time() - IMPORT_KEEP_S
+    for d in IMPORT_DIR.iterdir():
+        if d.is_dir() and d.stat().st_mtime < cutoff:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+@app.post("/api/mesh/inspect")
+async def inspect_mesh_upload(mesh: UploadFile, unit: str = Form("m")):
+    """Convert an uploaded volume mesh (Gmsh .msh v2 ASCII, ASCII Fluent
+    .msh/.cas, or a zipped OpenFOAM polyMesh) to meters and list its patches
+    with suggested roles. The result's `id` feeds POST /api/runs/import."""
+    _require_openfoam()
+    if unit not in VALID_UNITS:
+        raise HTTPException(422, f"unit must be one of {sorted(VALID_UNITS)}")
+    _prune_imports()
+    import_id = uuid.uuid4().hex
+    d = IMPORT_DIR / import_id
+    d.mkdir(parents=True)
+    suffix = Path(mesh.filename or "mesh.msh").suffix.lower()[:8] or ".msh"
+    upload = d / f"upload{suffix}"
+    with open(upload, "wb") as fh:
+        await run_in_threadpool(shutil.copyfileobj, mesh.file, fh, 1024 * 1024)
+    try:
+        info = await run_in_threadpool(
+            meshimport.inspect_mesh, upload, d / "case", unit, mesh.filename or upload.name)
+    except meshimport.MeshImportError as e:
+        shutil.rmtree(d, ignore_errors=True)
+        raise HTTPException(422, str(e))
+    finally:
+        upload.unlink(missing_ok=True)
+    info["id"] = import_id
+    (d / "import.json").write_text(json.dumps(info))
+    return info
+
+
+@app.post("/api/runs/import", status_code=201)
+async def create_import_run(request: Request):
+    """Solve on an inspected mesh. Body: {import_id, roles: {patch: role},
+    wind_speed, quality (iteration budget), name?, ref_area_cm2?, rho?, nu?}."""
+    _require_openfoam()
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(422, "body must be a JSON object")
+    unknown = set(body) - IMPORT_KEYS
+    if unknown:
+        raise HTTPException(422, f"unknown keys: {', '.join(sorted(unknown))}")
+    import_id = body.get("import_id")
+    if not (isinstance(import_id, str) and import_id.isalnum()):
+        raise HTTPException(422, "import_id is required")
+    d = IMPORT_DIR / import_id
+    if not (d / "import.json").exists():
+        raise HTTPException(404, "import not found or expired - inspect the mesh again")
+    info = json.loads((d / "import.json").read_text())
+
+    roles = body.get("roles")
+    centers = {p["name"]: p["center_m"] for p in info["patches"] if p.get("center_m")}
+    try:
+        meshimport.validate_roles(info["patches"], roles, centers)
+    except meshimport.MeshImportError as e:
+        raise HTTPException(422, str(e))
+
+    ws = body.get("wind_speed")
+    if not (_num(ws) and 0 < ws < 200):
+        raise HTTPException(422, "wind_speed must be a number in (0, 200) m/s")
+    quality = body.get("quality", "medium")
+    if quality not in VALID_QUALITY:
+        raise HTTPException(422, f"quality must be one of {sorted(VALID_QUALITY)}")
+    name = body.get("name")
+    if name is not None and not (isinstance(name, str) and name.strip()):
+        raise HTTPException(422, "name must be a non-empty string")
+    cfg = {
+        "name": name.strip() if name else Path(info["filename"]).stem or "imported mesh",
+        "unit": "m", "wind_speed": float(ws), "quality": quality,
+        "yaw_deg": 0, "pitch_deg": 0, "roll_deg": 0,
+        "rho": 1.225, "nu": 1.5e-5,
+        "mesh_import": {"filename": info["filename"], "format": info["format"],
+                        "source_unit": info["unit"], "cells": info["cells"],
+                        "roles": roles},
+    }
+    for key in ("rho", "nu", "ref_area_cm2"):
+        if body.get(key) is not None:
+            if not (_num(body[key]) and body[key] > 0):
+                raise HTTPException(422, f"{key} must be a positive number")
+            cfg[key] = float(body[key])
+    return {"id": _submit_run(None, cfg, mesh_src=d / "case" / "constant" / "polyMesh")}
 
 
 def _prune_repairs() -> None:
@@ -686,7 +793,7 @@ def get_viz_slice(run_id: str, axis: str = "y", pos: float | None = None):
     if s["status"] != "done":
         raise HTTPException(404, "visualization not available (run not done)")
     ax = {"x": 0, "y": 1, "z": 2}[axis]
-    _db = foamcase.domain_bounds(
+    _db = s.get("domain_bbox_m") or foamcase.domain_bounds(
         s["model"], ground=bool(s["config"].get("ground_plane")),
         symmetry=bool(s["config"].get("symmetry")))
     lo, hi = _db[0][ax], _db[1][ax]
@@ -738,12 +845,21 @@ def rerun(run_id: str):
     _get_state(run_id)
     rd = DATA_DIR / run_id
     stl, cfg_path = rd / "model.stl", rd / "config.json"
-    if not stl.exists() or not cfg_path.exists():
+    if not cfg_path.exists():
         raise HTTPException(410, "run inputs are no longer available")
     cfg = json.loads(cfg_path.read_text())
     # Strip group bookkeeping so it re-runs as a standalone run.
     for k in ("sweep_param", "trim"):
         cfg.pop(k, None)
+    if cfg.get("mesh_import"):
+        mesh_src = rd / "mesh_import" / "constant" / "polyMesh"
+        if not (mesh_src / "owner").exists():
+            raise HTTPException(410, "the imported mesh for this run is no longer available")
+        cfg.pop("mesh_from", None)
+        return {"id": _submit_run(stl.read_bytes() if stl.exists() else None, cfg,
+                                  mesh_src=mesh_src)}
+    if not stl.exists():
+        raise HTTPException(410, "run inputs are no longer available")
     return {"id": _submit_run(stl.read_bytes(), cfg, group_id=None)}
 
 

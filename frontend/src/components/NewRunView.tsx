@@ -26,6 +26,8 @@ function nudgeDeg(delta: number): (prev: string) => string {
 
 interface Props {
   onCreated: (id: string) => void;
+  /** Open the "solve on your own mesh" flow. */
+  onImportMesh: () => void;
 }
 
 const QUALITY_HINTS: Record<Quality, string> = {
@@ -34,7 +36,7 @@ const QUALITY_HINTS: Record<Quality, string> = {
   fine: "~30+ min",
 };
 
-export function NewRunView({ onCreated }: Props) {
+export function NewRunView({ onCreated, onImportMesh }: Props) {
   const [file, setFile] = useState<File | null>(null);
   const [triangles, setTriangles] = useState<number | null>(null);
   const [dims, setDims] = useState<[number, number, number] | null>(null);
@@ -946,6 +948,19 @@ export function NewRunView({ onCreated }: Props) {
                   </button>
                 </span>
               ))}
+            </div>
+            <div className="dropzone-sub">
+              already have a volume mesh?{" "}
+              <button
+                type="button"
+                className="dropzone-sample"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onImportMesh();
+                }}
+              >
+                import a Gmsh, Fluent or OpenFOAM mesh
+              </button>
             </div>
             <div className="dropzone-steps">
               <span><i>1</i> drop your STL</span>

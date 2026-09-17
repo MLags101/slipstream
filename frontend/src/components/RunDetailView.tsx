@@ -202,6 +202,8 @@ export function RunDetailView({
           <span title={`Run ID ${run.id}`}>#{shortRunId(run.id)}</span> ·{" "}
           {run.config.wind_speed} m/s · yaw {run.config.yaw_deg}° · {run.config.quality}
           {refinementLabel(run.config.refinement, run.refinement)}
+          {run.config.mesh_import &&
+            ` · imported ${run.config.mesh_import.format === "polymesh_zip" ? "OpenFOAM" : run.config.mesh_import.format} mesh`}
           {run.model && ` · ${run.model.triangles.toLocaleString("en-US")} tris`}
         </div>
         <div className="detail-actions">

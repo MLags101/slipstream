@@ -77,10 +77,51 @@ export interface RunConfig {
    * (requires `props`).
    */
   refinement?: RefinementOptions;
+  /** v8.4: the run solves on an imported mesh instead of meshing an STL. */
+  mesh_import?: {
+    filename: string;
+    format: string;
+    source_unit: string;
+    cells: number;
+    roles: Record<string, MeshRole>;
+  };
   /** v8.2: set on re-solves — the run whose mesh this one reused. */
   mesh_from?: string;
   /** v8.2: original run name that re-solve names are built from. */
   resolve_base_name?: string;
+}
+
+/** Role of a boundary patch in an imported mesh. */
+export type MeshRole = "inlet" | "outlet" | "model" | "slip" | "wall" | "symmetry";
+
+/** POST /api/mesh/inspect: an uploaded volume mesh, converted and checked. */
+export interface MeshInspection {
+  id: string;
+  filename: string;
+  format: "gmsh" | "fluent" | "polymesh_zip";
+  unit: string;
+  cells: number;
+  bounds_m: [[number, number, number], [number, number, number]] | null;
+  mesh_ok: boolean;
+  failed_checks: number;
+  patches: {
+    name: string;
+    type: string;
+    faces: number;
+    center_m: [number, number, number] | null;
+  }[];
+  suggested_roles: Record<string, MeshRole>;
+}
+
+/** POST /api/runs/import body. */
+export interface ImportRunRequest {
+  import_id: string;
+  roles: Record<string, MeshRole>;
+  wind_speed: number;
+  /** Iteration budget: coarse 250, medium 500, fine 800. */
+  quality: Quality;
+  name?: string;
+  ref_area_cm2?: number;
 }
 
 /** POST /api/runs/{id}/resolve body: only inputs that leave the mesh unchanged. */
@@ -476,6 +517,24 @@ export const api = {
 
   async rerunRun(id: string): Promise<{ id: string }> {
     const res = await request(`/runs/${id}/rerun`, { method: "POST" });
+    return (await res.json()) as { id: string };
+  },
+
+  /** Convert and check an uploaded volume mesh, listing its patches. */
+  async inspectMesh(mesh: File, unit: string): Promise<MeshInspection> {
+    const form = new FormData();
+    form.append("mesh", mesh, mesh.name);
+    form.append("unit", unit);
+    const res = await request("/mesh/inspect", { method: "POST", body: form });
+    return (await res.json()) as MeshInspection;
+  },
+
+  async importRun(body: ImportRunRequest): Promise<{ id: string }> {
+    const res = await request("/runs/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
     return (await res.json()) as { id: string };
   },
 

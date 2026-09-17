@@ -2,11 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError } from "./api";
 import { usePoll } from "./hooks/usePoll";
 import { Sidebar } from "./components/Sidebar";
+import { MeshImportView } from "./components/MeshImportView";
 import { NewRunView } from "./components/NewRunView";
 import { RunDetailView } from "./components/RunDetailView";
 import { CompareView } from "./components/CompareView";
 
-type Route = { view: "new" } | { view: "run"; id: string } | { view: "compare" };
+type Route =
+  | { view: "new" }
+  | { view: "import" }
+  | { view: "run"; id: string }
+  | { view: "compare" };
 
 export default function App() {
   const [route, setRoute] = useState<Route>({ view: "new" });
@@ -143,6 +148,16 @@ export default function App() {
                 setRefresh((n) => n + 1);
                 setRoute({ view: "run", id });
               }}
+              onImportMesh={() => setRoute({ view: "import" })}
+            />
+          )}
+          {route.view === "import" && (
+            <MeshImportView
+              onCreated={(id) => {
+                setRefresh((n) => n + 1);
+                setRoute({ view: "run", id });
+              }}
+              onBack={() => setRoute({ view: "new" })}
             />
           )}
           {route.view === "compare" && compareIds.length === 2 && (

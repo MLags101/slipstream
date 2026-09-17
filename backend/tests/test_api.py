@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -297,3 +298,125 @@ def test_detect_props_endpoint_validates_input():
                            data={"unit": "furlong"}).status_code == 422
     assert client.post("/api/stl/props", files={
         "stl": ("x.stl", b"not an stl", "model/stl")}).status_code == 422
+
+
+# -- mesh import ------------------------------------------------------------------
+
+IMPORT_PATCHES = [
+    {"name": "inflow", "type": "patch", "faces": 10, "center_m": [-1.0, 0, 0]},
+    {"name": "outflow", "type": "patch", "faces": 10, "center_m": [3.0, 0, 0]},
+    {"name": "farfield", "type": "patch", "faces": 40, "center_m": [1.0, 0, 0]},
+    {"name": "hull", "type": "wall", "faces": 200, "center_m": [0.0, 0, 0]},
+]
+IMPORT_ROLES = {"inflow": "inlet", "outflow": "outlet", "farfield": "slip", "hull": "model"}
+
+
+@pytest.fixture
+def inspected(monkeypatch):
+    """An inspected import on disk, plus a captured (never queued) submit."""
+    import json as _json
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    import_id = "abc123" + "0" * 26
+    d = main.IMPORT_DIR / import_id
+    (d / "case" / "constant" / "polyMesh").mkdir(parents=True, exist_ok=True)
+    (d / "case" / "constant" / "polyMesh" / "owner").write_text("mesh")
+    (d / "import.json").write_text(_json.dumps({
+        "id": import_id, "filename": "hull_v3.msh", "format": "fluent", "unit": "mm",
+        "cells": 123456, "patches": IMPORT_PATCHES}))
+    submitted = []
+    monkeypatch.setattr(main, "_submit_run", lambda stl, cfg, group_id=None, mesh_src=None:
+                        submitted.append((stl, cfg, mesh_src)) or "imported-run")
+    yield import_id, submitted
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_import_run_is_created_from_an_inspected_mesh(inspected):
+    import_id, submitted = inspected
+    res = client.post("/api/runs/import", json={
+        "import_id": import_id, "roles": IMPORT_ROLES, "wind_speed": 12, "quality": "coarse"})
+    assert res.status_code == 201, res.text
+    stl, cfg, mesh_src = submitted[0]
+    assert stl is None and mesh_src == main.IMPORT_DIR / import_id / "case" / "constant" / "polyMesh"
+    assert cfg["name"] == "hull_v3" and cfg["unit"] == "m" and cfg["wind_speed"] == 12.0
+    assert cfg["mesh_import"]["roles"] == IMPORT_ROLES
+    assert cfg["mesh_import"]["format"] == "fluent" and cfg["mesh_import"]["source_unit"] == "mm"
+
+
+@pytest.mark.parametrize("change, status, fragment", [
+    ({"roles": dict(IMPORT_ROLES, hull="slip")}, 422, "model role"),
+    ({"roles": {"inflow": "outlet", "outflow": "inlet", "farfield": "slip", "hull": "model"}},
+     422, "upstream"),
+    ({"wind_speed": 0}, 422, "wind_speed"),
+    ({"quality": "ultra"}, 422, "quality"),
+    ({"yaw_deg": 10}, 422, "unknown keys: yaw_deg"),
+    ({"ref_area_cm2": -5}, 422, "ref_area_cm2"),
+    ({"import_id": "f" * 32}, 404, "inspect the mesh again"),
+])
+def test_import_run_validation(inspected, change, status, fragment):
+    import_id, submitted = inspected
+    body = {"import_id": import_id, "roles": IMPORT_ROLES, "wind_speed": 12, **change}
+    res = client.post("/api/runs/import", json=body)
+    assert res.status_code == status, res.text
+    assert fragment in res.json()["detail"]
+    assert not submitted
+
+
+def test_mesh_inspect_endpoint(monkeypatch, tmp_path):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    seen = {}
+
+    def fake_inspect(upload, case, unit, filename):
+        seen.update(upload=upload.read_bytes(), unit=unit, filename=filename)
+        return {"filename": filename, "format": "gmsh", "cells": 99, "patches": []}
+
+    monkeypatch.setattr(main.meshimport, "inspect_mesh", fake_inspect)
+    res = client.post("/api/mesh/inspect", files={"mesh": ("wing.msh", b"$MeshFormat", "text/plain")},
+                      data={"unit": "mm"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert seen == {"upload": b"$MeshFormat", "unit": "mm", "filename": "wing.msh"}
+    assert (main.IMPORT_DIR / body["id"] / "import.json").exists()
+    assert not any((main.IMPORT_DIR / body["id"]).glob("upload*"))  # upload discarded
+
+
+def test_mesh_inspect_reports_conversion_errors(monkeypatch):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+
+    def boom(*a):
+        raise main.meshimport.MeshImportError("Gmsh format 4.1 isn't supported")
+
+    before = set(main.IMPORT_DIR.iterdir()) if main.IMPORT_DIR.exists() else set()
+    monkeypatch.setattr(main.meshimport, "inspect_mesh", boom)
+    res = client.post("/api/mesh/inspect", files={"mesh": ("wing.msh", b"$MeshFormat", "text/plain")})
+    assert res.status_code == 422 and "4.1" in res.json()["detail"]
+    assert set(main.IMPORT_DIR.iterdir()) == before  # nothing left behind
+    assert client.post("/api/mesh/inspect", files={"mesh": ("w.msh", b"x", "text/plain")},
+                       data={"unit": "furlong"}).status_code == 422
+
+
+def test_stl_runs_cannot_claim_an_imported_mesh(monkeypatch):
+    monkeypatch.setattr(main.foamenv, "find_openfoam", lambda: "/opt/homebrew/bin/openfoam")
+    submitted = []
+    monkeypatch.setattr(main, "_submit_run",
+                        lambda data, cfg, group_id=None, mesh_src=None: submitted.append(cfg) or "x")
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse",
+                     "mesh_import": {"roles": {}}, "mesh_from": "someone-else"})
+    assert res.status_code == 201, res.text
+    assert "mesh_import" not in submitted[0] and "mesh_from" not in submitted[0]
+
+
+def test_rerun_of_an_imported_run_copies_its_mesh(finished_run, monkeypatch):
+    cfg = dict(QUAD_CFG, props=None, mesh_import={"roles": IMPORT_ROLES, "format": "gmsh"})
+    cfg.pop("props")
+    rid = finished_run(cfg)
+    rd = main.DATA_DIR / rid
+    (rd / "mesh_import" / "constant" / "polyMesh").mkdir(parents=True)
+    (rd / "mesh_import" / "constant" / "polyMesh" / "owner").write_text("mesh")
+    calls = []
+    monkeypatch.setattr(main, "_submit_run", lambda stl, c, group_id=None, mesh_src=None:
+                        calls.append((c, mesh_src)) or "rerun-id")
+    assert client.post(f"/api/runs/{rid}/rerun").status_code == 201
+    c, mesh_src = calls[0]
+    assert mesh_src == rd / "mesh_import" / "constant" / "polyMesh" and c["mesh_import"]
+    (rd / "mesh_import" / "constant" / "polyMesh" / "owner").unlink()
+    assert client.post(f"/api/runs/{rid}/rerun").status_code == 410

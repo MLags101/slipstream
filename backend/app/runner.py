@@ -21,7 +21,7 @@ import time
 import traceback
 from pathlib import Path
 
-from . import foamcase, geometry, post
+from . import foamcase, geometry, meshimport, post
 from .foamenv import OPENFOAM, find_openfoam
 
 import signal
@@ -388,6 +388,15 @@ class Runner:
         shutil.rmtree(dst, ignore_errors=True)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns("sets", "cellZones*"))
 
+    def _extract_import_surface(self, rd: Path, roles: dict, run_id: str) -> None:
+        stage = rd / "mesh_import"
+        meshimport.write_minimal_case(stage)
+        names = " ".join(n for n, r in roles.items() if r == "model")
+        self._foam(stage, f"surfaceMeshExtract -patches '({names})' '{rd / 'model.stl'}'",
+                   "log.surfaceMeshExtract", run_id)
+        if not (rd / "model.stl").exists():
+            raise RuntimeError("couldn't extract the model patches from the imported mesh")
+
     def _execute(self, run_id: str) -> None:
         t0 = time.time()
         rd = self.run_dir(run_id)
@@ -400,6 +409,13 @@ class Runner:
                     message="Processing STL geometry", error=None,
                     stopped_early=False)
         tri_dir = case / "constant" / "triSurface"
+
+        # Imported mesh: the model is whatever patches were given the model
+        # role, extracted once as the run's STL (viewer, frontal area, lRef).
+        imported = config.get("mesh_import")
+        if imported and not (rd / "model.stl").exists():
+            self.update(run_id, message="Extracting the model surface from the imported mesh")
+            self._extract_import_surface(rd, imported["roles"], run_id)
 
         model = geometry.prepare_stl(
             str(rd / "model.stl"), config["unit"], float(config.get("yaw_deg") or 0),
@@ -438,6 +454,8 @@ class Runner:
                 case, params, moving=config.get("ground") != "static")
         if config.get("symmetry"):
             foamcase.add_symmetry_plane(case)
+        if imported:
+            meshimport.add_role_fields(case, imported["roles"])
         tri_dir.mkdir(parents=True, exist_ok=True)
         (rd / "model_prepared.stl").replace(tri_dir / "model.stl")
         self.update(run_id, progress=0.1, message="Case generated")
@@ -445,12 +463,22 @@ class Runner:
         # ---- meshing (0.1 - 0.35) -----------------------------------------
         if config.get("mesh_from"):
             self._reuse_mesh(case, config["mesh_from"], run_id)
+        elif imported:
+            self.update(run_id, status="meshing", progress=0.2,
+                        message="Installing the imported mesh")
+            # Move the mesh into the model frame (model bbox centered on 0).
+            meshimport.install_mesh(rd / "mesh_import" / "constant" / "polyMesh", case,
+                                    imported["roles"], [-c for c in model["_c1"]])
         else:
             self._mesh(case, run_id)
 
         self.update(run_id, progress=0.32, message="Checking mesh quality")
         self._foam(case, "checkMesh", "log.checkMesh", run_id, check=False)
         mesh_cells = post.parse_cell_count(case / "log.checkMesh")
+        if imported:
+            check = meshimport.parse_checkmesh(
+                (case / "log.checkMesh").read_text(errors="replace"))
+            self.update(run_id, domain_bbox_m=check["bounds_m"])
         self.update(run_id, mesh_cells=mesh_cells, progress=0.35,
                     message=f"Mesh ready ({mesh_cells or '?'} cells)")
 

@@ -1900,3 +1900,53 @@ body {
   min-width: 0;
   flex: 1 1 260px;
 }
+
+/* Mesh import */
+.mesh-import {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+.mesh-import-head h1 {
+  margin: 12px 0 6px;
+}
+.mesh-import-head {
+  margin-bottom: 16px;
+}
+.mesh-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.mesh-import-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.mesh-import-row .field {
+  flex: 1 1 180px;
+}
+.mesh-import-table {
+  overflow-x: auto;
+}
+.mesh-import-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mesh-import-table th,
+.mesh-import-table td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.mesh-import-table th {
+  color: var(--text-2);
+  font-weight: 500;
+  font-size: 12px;
+}
+.mesh-import-error {
+  margin-top: 12px;
+  white-space: pre-wrap;
+}
