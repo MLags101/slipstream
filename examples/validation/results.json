@@ -460,5 +460,78 @@
     "error": null
    }
   ]
+ },
+ "ahmed_25_medium_target100": {
+  "config": {
+   "name": "Validation: Ahmed 25\u00b0, medium, target y+ 100",
+   "unit": "mm",
+   "wind_speed": 60,
+   "quality": "medium",
+   "symmetry": true,
+   "ground_plane": true,
+   "ground": "static",
+   "layers": {
+    "count": 10,
+    "expansion": 1.2,
+    "target_y_plus": 100,
+    "ground": true
+   }
+  },
+  "reference": {
+   "cd": 0.285,
+   "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; 25\u00b0 slant at 60 m/s"
+  },
+  "mesh": null,
+  "members": [
+   {
+    "id": "20260917-172157-f361b7",
+    "quality": "medium",
+    "status": "done",
+    "mesh_cells": 169697,
+    "cd": 0.30985820731818187,
+    "cl": 0.5503360536363636,
+    "drag_N": 76.54389980954706,
+    "converged": true,
+    "iterations": 220,
+    "reynolds": 4176000.663249346,
+    "runtime_s": 108.4,
+    "frontal_area_m2": 0.11203119989025513,
+    "cd_std_last20pct": 0.003780043623634738,
+    "drag_pressure_N": 68.64575736818182,
+    "drag_viscous_N": 7.898142547272727,
+    "y_plus": {
+     "ground": {
+      "min": 91.562019,
+      "max": 8786.6793,
+      "average": 1867.7223
+     },
+     "model": {
+      "min": 1.7420319,
+      "max": 686.89982,
+      "average": 109.4775
+     }
+    },
+    "y_plus_verdict": "ok",
+    "layer_coverage": {
+     "ground": {
+      "layers": 4.33,
+      "layers_requested": 10,
+      "coverage_pct": 64.1
+     },
+     "model": {
+      "layers": 0.873,
+      "layers_requested": 1,
+      "coverage_pct": 79.4
+     }
+    },
+    "layers": {
+     "count": 10,
+     "expansion": 1.2,
+     "target_y_plus": 100,
+     "ground": true
+    },
+    "error": null
+   }
+  ]
  }
 }

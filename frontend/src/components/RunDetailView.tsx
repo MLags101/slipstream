@@ -3,6 +3,7 @@ import { api, type History, type LogTail, type RunDetail } from "../api";
 import { usePoll } from "../hooks/usePoll";
 import { shortRunId } from "../lib/format";
 import { refinementLabel } from "../lib/refinementText";
+import { layerTargetText } from "../lib/layers";
 import { ResolvePanel } from "./ResolvePanel";
 import { isTerminal } from "./StatusPill";
 import { StatusPill } from "./StatusPill";
@@ -143,6 +144,9 @@ export function RunDetailView({
   }
 
   const run = snapshot;
+  // What a y+ target resolved to, plus a warning when some patch's cells are
+  // too coarse to reach it.
+  const layerTarget = layerTargetText(run.layer_target);
   const hasHistory = history !== null && history.iters.length > 0;
   const hasResiduals =
     history !== null && history.residuals && history.residuals.iters.length > 0;
@@ -206,6 +210,12 @@ export function RunDetailView({
             ` · imported ${run.config.mesh_import.format === "polymesh_zip" ? "OpenFOAM" : run.config.mesh_import.format} mesh`}
           {run.model && ` · ${run.model.triangles.toLocaleString("en-US")} tris`}
         </div>
+        {layerTarget && (
+          <div className="detail-meta mono">{layerTarget.summary}</div>
+        )}
+        {layerTarget?.warning && (
+          <div className="form-error">{layerTarget.warning}</div>
+        )}
         <div className="detail-actions">
           {running && (
             <button

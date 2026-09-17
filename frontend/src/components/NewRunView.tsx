@@ -102,6 +102,7 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
     String(LAYER_DEFAULTS.final_thickness),
   );
   const [groundLayers, setGroundLayers] = useState(false);
+  const [targetYPlus, setTargetYPlus] = useState("100");
   const [quality, setQuality] = useState<Quality>("medium");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -753,6 +754,20 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
         custom[key] = v;
       }
       layers = custom;
+    } else if (layerPreset === "target") {
+      const ty = parseFloat(targetYPlus);
+      const n = parseInt(layerCount, 10);
+      if (!Number.isFinite(ty) || ty < 1 || ty > 1000) {
+        setSubmitError("Target y+ must be a number between 1 and 1000");
+        return;
+      }
+      if (!Number.isFinite(n) || n < 1 || n > LAYER_LIMITS.count[1]) {
+        setSubmitError(
+          `Aiming for a y+ needs between 1 and ${LAYER_LIMITS.count[1]} layers`,
+        );
+        return;
+      }
+      layers = { count: n, expansion: 1.2, target_y_plus: ty };
     } else {
       const preset = LAYER_PRESETS.find((p) => p.id === layerPreset);
       layers = preset?.settings ? { ...preset.settings } : undefined;
@@ -1403,7 +1418,13 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
             <span className="field-label">Boundary layers</span>
             <select
               value={layerPreset}
-              onChange={(e) => setLayerPreset(e.target.value)}
+              onChange={(e) => {
+                const id = e.target.value;
+                setLayerPreset(id);
+                // A y+ target needs a deep enough stack to reach out to the
+                // surface cell from a first layer measured in millimeters.
+                if (id === "target") setLayerCount("10");
+              }}
               disabled={!file}
             >
               {LAYER_PRESETS.map((p) => (
@@ -1418,7 +1439,43 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
                 {LAYER_PRESETS.find((p) => p.id === layerPreset)?.hint}
               </span>
             )}
-            {layerPreset !== "none" && (
+            {layerPreset === "target" && (
+              <>
+                <div className="layer-custom">
+                  <label className="field">
+                    <span className="field-label">Target y+</span>
+                    <input
+                      type="number"
+                      className="mono"
+                      value={targetYPlus}
+                      min={1}
+                      max={1000}
+                      step="any"
+                      onChange={(e) => setTargetYPlus(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field-label">Layers</span>
+                    <input
+                      type="number"
+                      className="mono"
+                      value={layerCount}
+                      min={1}
+                      max={LAYER_LIMITS.count[1]}
+                      step={1}
+                      onChange={(e) => setLayerCount(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <span className="config-note">
+                  30–300 is the band the wall functions are valid in; 100 is a
+                  safe middle. The first layer is sized from a flat-plate
+                  friction estimate, so treat it as aiming, not hitting — the
+                  run reports the y+ it actually achieved.
+                </span>
+              </>
+            )}
+            {layerPreset !== "none" && layerPreset !== "target" && (
               <span className="config-note">{LAYER_YPLUS_CAVEAT}</span>
             )}
             {layerPreset === CUSTOM_PRESET && (

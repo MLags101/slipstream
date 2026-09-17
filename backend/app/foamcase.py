@@ -59,6 +59,9 @@ LAYER_LIMITS = {
     "expansion": (1.0, 2.0),
     "final_thickness": (0.05, 1.0),
     "min_thickness": (0.001, 0.5),
+    # Absolute mode: aim the first cell at this y+ instead of sizing the stack
+    # as a fraction of the surface cell. See first_layer_thickness.
+    "target_y_plus": (1.0, 1000.0),
 }
 
 
@@ -80,12 +83,113 @@ def layer_settings(config: dict) -> dict:
     return out
 
 
-def layer_entries(patches: list[str], count: int) -> str:
-    """The `layers { ... }` body of addLayersControls: one entry per patch."""
+def first_layer_thickness(target_y_plus: float, u_inf: float, length_m: float,
+                          nu: float) -> float:
+    """Height (m) of the first prism layer whose CELL CENTER lands at
+    `target_y_plus`, from the flat-plate turbulent skin-friction correlation
+
+        Cf   = 0.058 Re_L^-0.2
+        u_tau = U sqrt(Cf / 2)
+        y     = y+ nu / u_tau
+
+    snappyHexMesh's firstLayerThickness is the cell height, and y+ is measured
+    at the cell center, so the height is twice y.
+
+    This is an estimate: a real body is not a flat plate, and Cf varies over
+    it. It is good to roughly a factor of two, which is enough when the target
+    band (30-300) spans a factor of ten.
+    """
+    if min(target_y_plus, u_inf, length_m, nu) <= 0:
+        raise ValueError("target_y_plus, u_inf, length_m and nu must be positive")
+    re_l = u_inf * length_m / nu
+    cf = 0.058 * re_l ** -0.2
+    u_tau = u_inf * math.sqrt(cf / 2.0)
+    return 2.0 * target_y_plus * nu / u_tau
+
+
+# snappyHexMesh refuses a layer stack much thicker than the surface cell it
+# grows from (maxFaceThicknessRatio). Asking for more simply produces no
+# layers at all — measured: a 35 mm stack requested on a 3.3 mm surface cell
+# grew 0.1 layers over 1.8% of the model.
+LAYER_STACK_CELL_FRACTION = 0.5
+
+
+def bridging_layer_count(first_m: float, expansion: float, cell_m: float) -> int:
+    """Layers needed to grow from `first_m` up to the local cell size.
+
+    If the stack cannot bridge that gap within the allowed count, the outermost
+    layer is still far smaller than the cell it meets. snappyHexMesh then fails
+    to grow most of the stack: measured on the Ahmed floor, where 209 mm cells
+    and a 1.35 mm first layer need ~28 layers to bridge, only 4.3 of 10 grew,
+    over 64% of the faces. Refining the surface is the only fix.
+    """
+    if first_m <= 0 or cell_m <= first_m or expansion <= 1.0:
+        return 1
+    return math.ceil(math.log(cell_m / first_m) / math.log(expansion))
+
+
+def feasible_layer_count(first_m: float, expansion: float, cell_m: float,
+                         requested: int) -> int:
+    """How many layers of `first_m` (growing by `expansion`) actually fit on a
+    cell of `cell_m`, capped at `requested`.
+
+    Total stack of n layers is first * (r^n - 1) / (r - 1) for r > 1. Solving
+    for the largest n whose total stays within LAYER_STACK_CELL_FRACTION of the
+    cell gives the count snappy will accept.
+    """
+    budget = LAYER_STACK_CELL_FRACTION * cell_m
+    if first_m <= 0 or first_m > budget:
+        return 0  # not even one layer of this thickness fits
+    if expansion <= 1.0:
+        return max(0, min(requested, int(budget // first_m)))
+    n = math.floor(
+        math.log(1.0 + budget * (expansion - 1.0) / first_m) / math.log(expansion))
+    return max(0, min(requested, int(n)))
+
+
+def layer_thickness_controls(lay: dict, u_inf: float, length_m: float,
+                             nu: float) -> tuple[str, dict | None]:
+    """The thickness half of addLayersControls, in one of two modes.
+
+    Relative (the default, and what every run before v8.5 used): thicknesses
+    are fractions of the local surface cell.
+
+    Absolute (`target_y_plus` set): the first layer is sized in meters to land
+    at the requested y+. This is the only mode that can actually aim at a y+,
+    because the relative mode is anchored to the surface cell size.
+
+    Returns the substituted block and, for absolute mode, what was computed so
+    the run can report it.
+    """
+    target = lay.get("target_y_plus")
+    if not target:
+        return (f"    relativeSizes true;\n"
+                f"    expansionRatio      {fmt(lay['expansion'])};\n"
+                f"    finalLayerThickness {fmt(lay['final_thickness'])};\n"
+                f"    minThickness        {fmt(lay['min_thickness'])};"), None
+    first = first_layer_thickness(float(target), u_inf, length_m, nu)
+    # Let snappy shrink a layer to a quarter of the request rather than drop
+    # the stack outright; a thinner layer still beats no layer.
+    min_thick = 0.25 * first
+    return (f"    relativeSizes false;\n"
+            f"    expansionRatio      {fmt(lay['expansion'])};\n"
+            f"    firstLayerThickness {fmt(first)};\n"
+            f"    minThickness        {fmt(min_thick)};"), {
+        "target_y_plus": float(target),
+        "first_layer_m": first,
+        "expansion": lay["expansion"],
+        "count": lay["count"],
+    }
+
+
+def layer_entries(counts: dict[str, int]) -> str:
+    """The `layers { ... }` body of addLayersControls, one entry per patch.
+    Counts differ per patch in y+ target mode, because how many layers fit
+    depends on the local cell size."""
     return "".join(
         f"        {name}\n        {{\n"
-        f"            nSurfaceLayers {count};\n        }}\n"
-        for name in patches)
+        f"            nSurfaceLayers {n};\n        }}\n"
+        for name, n in counts.items())
 
 # Long wake: the level-2 box reaches this many body lengths behind the model
 # (default 1.5L), followed by a level-1 box out to LONG_WAKE_L1_L.
@@ -258,6 +362,31 @@ def compute_params(model: dict, config: dict,
     # the user asked for a static floor.
     lay = layer_settings(config)
     layer_patches = ["model"] + (["ground"] if ground and lay["ground"] else [])
+    layer_thickness, layer_target = layer_thickness_controls(lay, U0, L, nu)
+    # Cell the layers grow from: the model is surface-refined, the floor is not.
+    patch_cell = {"model": cell / (2 ** q["surf_max"]), "ground": cell}
+    if layer_target is None:
+        layer_counts = {p: lay["count"] for p in layer_patches}
+    else:
+        # Absolute mode: the first layer is fixed by the y+ target, so the
+        # count is whatever fits the local cell — not what the user typed.
+        first = layer_target["first_layer_m"]
+        layer_counts = {
+            p: feasible_layer_count(first, lay["expansion"], patch_cell[p],
+                                    lay["count"])
+            for p in layer_patches}
+        layer_target["counts"] = dict(layer_counts)
+        layer_target["patch_cell_m"] = {p: patch_cell[p] for p in layer_patches}
+        # A target is out of reach on a patch when no layer fits at all, or
+        # when the stack cannot bridge from the first layer to the local cell
+        # within the layer limit. Both need a finer surface mesh, not more
+        # layers, so the run says so instead of quietly growing a partial stack.
+        max_count = LAYER_LIMITS["count"][1]
+        layer_target["unreachable"] = sorted(
+            p for p in layer_counts
+            if layer_counts[p] == 0
+            or bridging_layer_count(first, lay["expansion"],
+                                    patch_cell[p]) > max_count)
 
     # Point near inlet corner, guaranteed outside the model & refinement box.
     # With symmetry, dy0 == 0, so liy = 0.677*cell is a positive point just
@@ -302,15 +431,16 @@ def compute_params(model: dict, config: dict,
         "maxGlobalCells": str(q["max_global_cells"]),
         "nprocs": str(NPROCS),
         "doLayers": "true" if lay["count"] > 0 else "false",
-        "layerEntries": layer_entries(layer_patches, lay["count"]),
-        "expansionRatio": fmt(lay["expansion"]),
-        "finalLayerThickness": fmt(lay["final_thickness"]),
-        "minThickness": fmt(lay["min_thickness"]),
+        "layerEntries": layer_entries(layer_counts),
+        "layerThickness": layer_thickness,
         "extraGeometry": extra_geometry,
         "extraRegions": extra_regions,
         # convenience for the runner (non-string: not template keys)
         "iterations": q["iterations"],
         "base_cell": cell,
+        # What the y+ target worked out to, so the run can report it beside
+        # the y+ actually achieved. None in relative mode.
+        "layer_target": layer_target,
         "refinement_info": {
             "long_wake": ({"level2_end_m": rbx1,
                            "level1_end_m": boxes[0][2][0] if boxes else rbx1}

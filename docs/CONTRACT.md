@@ -544,3 +544,29 @@ the validation errors in VALIDATION.md, so it is reported on every run rather th
 sweeps or trim) the sweep panel adds Cl-vs-angle and L/D-vs-angle charts and Cl / L/D table
 columns, and the CSV export gains `cl,l_over_d,lift_N`. Members from before v8.5 have `cl`
 undefined, and such sweeps keep the old Cd-only layout.
+
+## v8.6: aiming at a y+
+
+`config.layers.target_y_plus` (1–1000, requires `layers.count`) switches the prism stack
+from relative to absolute sizing. `foamcase.first_layer_thickness` sizes the first layer in
+meters from the flat-plate correlation `Cf = 0.058 Re_L^-0.2`, `u_tau = U sqrt(Cf/2)`,
+`y = y+ nu / u_tau`, doubled because snappyHexMesh's `firstLayerThickness` is a cell height
+while y+ is measured at the cell center. The dict then uses `relativeSizes false` with
+`firstLayerThickness`, and `minThickness` becomes a quarter of it.
+
+The layer count is **derived, not requested**. `foamcase.feasible_layer_count` caps the
+stack at `LAYER_STACK_CELL_FRACTION` (0.5) of the cell it grows from — the model's
+surface cell (`base_cell / 2^surf_max`) or the floor's base cell — because snappy silently
+refuses a stack much thicker than its cell. `foamcase.bridging_layer_count` then flags a
+patch whose cells are too coarse to reach the target at all; those land in
+`layer_target.unreachable` and the UI says only a finer mesh helps.
+
+Runs report `layer_target` ({target_y_plus, first_layer_m, expansion, count, counts,
+patch_cell_m, unreachable}) on the run detail, and results gain `layer_coverage`
+({layers, layers_requested, coverage_pct} per patch) parsed from snappyHexMesh's final
+table. Coverage below `post.LAYER_COVERAGE_LOW` (70%) raises a warning, because a patchy
+stack is worse than none.
+
+Measured on the Ahmed body at medium: model target 100 → achieved 109.5 (0.87 of 1 layer,
+79.4% coverage); ground target 100 → achieved 1868 (4.33 of 10 layers, 64.1% coverage),
+its 209 mm cells needing ~28 layers to bridge to a 1.35 mm first layer. See VALIDATION.md.

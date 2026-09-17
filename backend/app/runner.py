@@ -443,9 +443,11 @@ class Runner:
         params = foamcase.compute_params(model, config, props_m=props)
         iterations = params.pop("iterations")
         refinement_info = params.pop("refinement_info")
+        layer_target = params.pop("layer_target")
 
         self.update(run_id, model=model, progress=0.06,
                     refinement=refinement_info if config.get("refinement") else None,
+                    layer_target=layer_target,
                     message="Generating OpenFOAM case")
         foamcase.generate_case(case, params)
         if config.get("ground_plane"):

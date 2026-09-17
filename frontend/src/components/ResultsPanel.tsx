@@ -7,7 +7,7 @@ import {
   formatInt,
 } from "../lib/format";
 import { downloadText, resultToCsv, slugify } from "../lib/download";
-import { yPlusRows, yPlusText } from "../lib/layers";
+import { layerCoverageWarning, yPlusRows, yPlusText } from "../lib/layers";
 
 // Split-bar segment colors (match the chart palette).
 const C_PRESSURE = "#3987e5";
@@ -101,6 +101,10 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
     const t = yPlusText(result);
     if (t) warnings.push(t);
   }
+  // Layers that were requested but didn't grow. Worth saying even when y+
+  // looks fine, because the average hides the patchiness.
+  const coverage = layerCoverageWarning(result);
+  if (coverage) warnings.push(coverage);
 
   // v2 drag breakdown — null (or absent) for runs solved before the feature.
   const dragP = result.drag_pressure_N;

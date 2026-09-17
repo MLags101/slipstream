@@ -257,6 +257,10 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         if layers.get("ground") and not cfg.get("ground_plane"):
             raise HTTPException(
                 422, "layers.ground requires ground_plane")
+        if layers.get("target_y_plus") and not layers.get("count"):
+            raise HTTPException(
+                422, "layers.target_y_plus needs layers.count (the first cell "
+                     "is sized for the target, but something has to grow)")
         if not layers:
             cfg.pop("layers")
 
@@ -453,6 +457,8 @@ def get_run(run_id: str):
         "model": model, "mesh_cells": s["mesh_cells"],
         "props_m": props_m,
         "refinement": s.get("refinement"),
+        # v8.6: what a y+ target worked out to, when one was set.
+        "layer_target": s.get("layer_target"),
         "has_mesh": _has_mesh(s["id"]),
         "result": _compat_result(s["result"]), "error": s["error"],
     }

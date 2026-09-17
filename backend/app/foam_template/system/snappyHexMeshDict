@@ -91,15 +91,11 @@ snapControls
 
 addLayersControls
 {
-    relativeSizes true;
-
     layers
     {
 ${layerEntries}    }
 
-    expansionRatio      ${expansionRatio};
-    finalLayerThickness ${finalLayerThickness};
-    minThickness        ${minThickness};
+${layerThickness}
     nGrow               0;
 
     featureAngle        60;

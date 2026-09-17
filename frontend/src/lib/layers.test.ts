@@ -3,6 +3,7 @@ import type { RunResult } from "../api";
 import {
   CUSTOM_PRESET,
   LAYER_PRESETS,
+  layerCoverageWarning,
   layerLabel,
   presetIdFor,
   yPlusRows,
@@ -135,5 +136,50 @@ describe("yPlusRows", () => {
     );
     expect(rows.map((r) => r.patch)).toEqual(["model", "ground"]);
     expect(rows[0].average).toBe(3.5);
+  });
+});
+
+describe("y+ targeting", () => {
+  it("maps any y+ target to the target preset", () => {
+    expect(presetIdFor({ count: 10, expansion: 1.2, target_y_plus: 100 })).toBe("target");
+    expect(presetIdFor({ count: 4, target_y_plus: 45 })).toBe("target");
+  });
+
+  it("does not mistake a plain config for a y+ target", () => {
+    expect(presetIdFor({ count: 3 })).toBe("standard");
+    expect(presetIdFor({ count: 6, expansion: 1.2, final_thickness: 0.4 })).toBe("fine");
+  });
+});
+
+describe("layerCoverageWarning", () => {
+  it("is null when layers grew everywhere", () => {
+    expect(
+      layerCoverageWarning(
+        result({
+          layer_coverage: {
+            model: { layers: 5.1, layers_requested: 6, coverage_pct: 90.8 },
+          },
+        }),
+      ),
+    ).toBeNull();
+  });
+
+  it("is null without data", () => {
+    expect(layerCoverageWarning(result({}))).toBeNull();
+  });
+
+  it("names the patch and says which way to move", () => {
+    const w = layerCoverageWarning(
+      result({
+        layer_coverage: {
+          ground: { layers: 8.87, layers_requested: 12, coverage_pct: 62.4 },
+          model: { layers: 8.86, layers_requested: 12, coverage_pct: 89.4 },
+        },
+      }),
+    );
+    expect(w).toContain("ground");
+    expect(w).toContain("62%");
+    expect(w).not.toContain("model got");
+    expect(w).toContain("fewer layers");
   });
 });

@@ -1,4 +1,5 @@
 """Prism layer controls and the y+ report that tells you whether they worked."""
+import math
 import re
 
 import pytest
@@ -22,6 +23,10 @@ def snappy_dict(tmp_path, **kw):
     params = foamcase.compute_params(MODEL, cfg(**kw))
     foamcase.generate_case(tmp_path / "case", params)
     return (tmp_path / "case" / "system" / "snappyHexMeshDict").read_text()
+
+
+def snappy_params(**kw):
+    return foamcase.compute_params(MODEL, cfg(**kw))
 
 
 def n_layers(text, patch):
@@ -131,3 +136,159 @@ def test_verdict_prefers_the_model_patch():
 def test_verdict_is_none_without_data():
     assert post.y_plus_verdict(None) is None
     assert post.y_plus_verdict({}) is None
+
+
+# --- y+ targeting (absolute first-layer height) ------------------------------
+
+def test_default_mode_stays_relative(tmp_path):
+    text = snappy_dict(tmp_path)
+    assert "relativeSizes true;" in text
+    assert "finalLayerThickness" in text
+    assert "firstLayerThickness" not in text
+    assert snappy_params()["layer_target"] is None
+
+
+def test_target_switches_to_an_absolute_first_layer(tmp_path):
+    text = snappy_dict(tmp_path, layers={"count": 10, "target_y_plus": 100})
+    assert "relativeSizes false;" in text
+    assert "firstLayerThickness" in text
+    assert "finalLayerThickness" not in text
+
+
+def test_first_layer_thickness_matches_the_correlation():
+    """y = y+ nu / u_tau with Cf = 0.058 Re^-0.2, doubled because
+    firstLayerThickness is a cell height and y+ is at the cell center."""
+    u, length, nu, target = 60.0, 1.044, 1.5e-5, 100.0
+    re_l = u * length / nu
+    cf = 0.058 * re_l ** -0.2
+    u_tau = u * math.sqrt(cf / 2.0)
+    expected = 2.0 * target * nu / u_tau
+    got = foamcase.first_layer_thickness(target, u, length, nu)
+    assert got == pytest.approx(expected)
+    # Sanity: a car-sized body at 60 m/s wants roughly a millimeter.
+    assert 0.5e-3 < got < 3e-3
+
+
+def test_first_layer_scales_linearly_with_target():
+    a = foamcase.first_layer_thickness(30, 60, 1.0, 1.5e-5)
+    b = foamcase.first_layer_thickness(300, 60, 1.0, 1.5e-5)
+    assert b / a == pytest.approx(10.0)
+
+
+def test_first_layer_shrinks_as_speed_rises():
+    slow = foamcase.first_layer_thickness(100, 10, 1.0, 1.5e-5)
+    fast = foamcase.first_layer_thickness(100, 100, 1.0, 1.5e-5)
+    assert fast < slow
+
+
+@pytest.mark.parametrize("bad", [
+    {"target_y_plus": 0, "u": 60, "L": 1.0, "nu": 1.5e-5},
+    {"target_y_plus": 100, "u": 0, "L": 1.0, "nu": 1.5e-5},
+    {"target_y_plus": 100, "u": 60, "L": 0, "nu": 1.5e-5},
+])
+def test_first_layer_rejects_nonsense(bad):
+    with pytest.raises(ValueError):
+        foamcase.first_layer_thickness(bad["target_y_plus"], bad["u"],
+                                       bad["L"], bad["nu"])
+
+
+def test_target_is_reported_for_the_run():
+    target = snappy_params(layers={"count": 8, "target_y_plus": 50})["layer_target"]
+    assert target["target_y_plus"] == 50
+    assert target["count"] == 8
+    assert target["first_layer_m"] > 0
+
+
+def test_min_thickness_is_a_fraction_of_the_first_layer(tmp_path):
+    """In absolute mode minThickness is in meters, so it cannot stay at the
+    relative-mode 0.1 — that would be 10 cm and drop every stack."""
+    text = snappy_dict(tmp_path, layers={"count": 10, "target_y_plus": 100})
+    first = float(re.search(r"firstLayerThickness\s+(\S+);", text).group(1))
+    mint = float(re.search(r"minThickness\s+(\S+);", text).group(1))
+    assert 0 < mint < first
+
+
+# --- layer coverage ---------------------------------------------------------
+
+SNAPPY_LOG = """
+Layer mesh : cells:273634  faces:800000  points:300000
+patch  faces    layers   overall thickness
+                         [m]      [%]
+-----  -----    ------   ---      ---
+ground 1314     12       0.00964  0.279
+model  24781    12       0.000558 0.0153
+
+Doing final balance
+patch  faces    layers   avg thickness[m]
+                wanted   got
+-----  -----    ------   ---    ---      ---
+ground 1314     12       8.87   0.154    62.4
+model  24781    12       8.86   0.0143   89.4
+"""
+
+
+def test_layer_coverage_reads_the_achieved_table_not_the_request(tmp_path):
+    p = tmp_path / "log.snappyHexMesh"
+    p.write_text(SNAPPY_LOG)
+    cov = post.parse_layer_coverage(p)
+    assert cov["ground"]["layers"] == pytest.approx(8.87)
+    assert cov["ground"]["layers_requested"] == 12
+    assert cov["ground"]["coverage_pct"] == pytest.approx(62.4)
+    assert cov["model"]["coverage_pct"] == pytest.approx(89.4)
+
+
+def test_layer_coverage_is_none_without_a_log(tmp_path):
+    assert post.parse_layer_coverage(tmp_path / "nope.log") is None
+    empty = tmp_path / "log.snappyHexMesh"
+    empty.write_text("Layer mesh : cells:100\n")
+    assert post.parse_layer_coverage(empty) is None
+
+
+# --- how many layers actually fit -------------------------------------------
+
+def test_layer_count_is_capped_by_the_cell_it_grows_from():
+    """Measured: a 35 mm stack requested on a 3.26 mm surface cell grew 0.1
+    layers over 1.8% of the model. The count must come from the geometry."""
+    # 1.35 mm first layer on a 3.26 mm cell leaves room for one layer.
+    assert foamcase.feasible_layer_count(1.35e-3, 1.2, 3.26e-3, 10) == 1
+    # The same first layer on a 209 mm floor cell has room for the lot.
+    assert foamcase.feasible_layer_count(1.35e-3, 1.2, 0.209, 10) == 10
+
+
+def test_a_first_layer_thicker_than_the_cell_fits_nothing():
+    assert foamcase.feasible_layer_count(5e-3, 1.2, 3.26e-3, 10) == 0
+
+
+def test_feasible_count_never_exceeds_the_request():
+    assert foamcase.feasible_layer_count(1e-5, 1.2, 1.0, 4) == 4
+
+
+def test_bridging_count_flags_a_gap_too_big_to_span():
+    # Ahmed floor: 209 mm cells, 1.35 mm first layer, ratio 1.2.
+    assert foamcase.bridging_layer_count(1.35e-3, 1.2, 0.209) > 12
+    # Ahmed model surface: 3.26 mm cells — an easy span.
+    assert foamcase.bridging_layer_count(1.35e-3, 1.2, 3.26e-3) <= 12
+
+
+def test_unreachable_names_the_patch_that_cannot_get_there(tmp_path):
+    """The floor's cells are ~60x the first layer the target needs, so the
+    stack cannot bridge to them — exactly the case that measured 64% coverage
+    and y+ 1868 against a target of 100."""
+    model = {"bbox_m": [[0, 0, 0], [1.044, 0.389, 0.288]],
+             "frontal_area_m2": 0.112, "centroid": [0.5, 0.2, 0.14]}
+    params = foamcase.compute_params(model, {
+        "wind_speed": 60, "quality": "medium", "ground_plane": True,
+        "layers": {"count": 10, "expansion": 1.2, "target_y_plus": 100,
+                   "ground": True}})
+    target = params["layer_target"]
+    assert target["unreachable"] == ["ground"]
+    assert target["counts"]["model"] == 1
+
+
+def test_a_reachable_target_reports_nothing_unreachable():
+    model = {"bbox_m": [[0, 0, 0], [1.044, 0.389, 0.288]],
+             "frontal_area_m2": 0.112, "centroid": [0.5, 0.2, 0.14]}
+    params = foamcase.compute_params(model, {
+        "wind_speed": 60, "quality": "medium",
+        "layers": {"count": 6, "expansion": 1.2, "target_y_plus": 100}})
+    assert params["layer_target"]["unreachable"] == []

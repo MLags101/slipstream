@@ -169,5 +169,39 @@ Cd 0.297, where the mesh-independence sweep in the same configuration gave 0.306
 spread is the same order as several of the differences being discussed.
 
 The honest summary is that the y+ report is the useful part of v8.5 — it makes a real
-problem visible and measurable. The layer controls adjust the mesh, but they are not yet a
-way to fix the problem the report exposes.
+problem visible and measurable. The layer controls adjust the mesh, but they are not a way
+to fix the problem the report exposes.
+
+## Aiming at a y+ (v8.6)
+
+v8.6 adds the mode the section above says is missing: the first layer is sized in meters
+from a target y+, using the flat-plate estimate
+
+    Cf = 0.058 Re_L^-0.2,  u_tau = U sqrt(Cf/2),  y = y+ nu / u_tau
+
+with the layer height set to 2y, since y+ is measured at the cell center. On the same Ahmed
+case, asking for y+ 100:
+
+| Patch | Target | Achieved | Layers grown | Coverage |
+| --- | --- | --- | --- | --- |
+| model | 100 | **109.5** | 0.87 of 1 | 79.4% |
+| ground | 100 | 1868 | 4.33 of 10 | 64.1% |
+
+**On the model it works** — 109.5 against a target of 100, from a correlation that only
+claims a factor of two. Cd came out 0.310 (+8.7%).
+
+**On the floor it does not, and cannot.** The floor is not surface-refined, so its cells are
+about 209 mm while the target needs a 1.35 mm first layer. Bridging that 150× gap at an
+expansion ratio of 1.2 would take roughly 28 layers; the limit is 12. snappyHexMesh grew 4.3
+of the 10 requested over 64% of the faces, and y+ barely moved.
+
+This is a property of the geometry, not a bug, so the app now detects it up front:
+`foamcase.bridging_layer_count` compares the first layer against the local cell size, and a
+patch that cannot be reached is named in the run's `layer_target.unreachable`, with the UI
+saying that only a finer mesh will help. The layer count per patch is likewise derived from
+what fits rather than taken from the request — asking for 10 layers on a 3.26 mm surface
+cell previously produced a 35 mm stack that snappy refused, growing 0.1 layers over 1.8% of
+the model.
+
+The practical rule: **y+ targeting works on surfaces the mesh actually refines.** For the
+ground plane, refine the surface first or accept the y+ it reports.

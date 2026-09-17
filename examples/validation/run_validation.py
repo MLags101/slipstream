@@ -89,6 +89,21 @@ CASES = [
         "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
                       "25° slant at 60 m/s"},
     },
+    # v8.6: size the first layer in meters for a target y+ instead of as a
+    # fraction of the surface cell. This is the case that says whether the
+    # correlation actually lands in the 30-300 band.
+    {
+        "name": "ahmed_25_medium_target100",
+        "stl": "ahmed_25.stl",
+        "single": True,
+        "config": {"name": "Validation: Ahmed 25°, medium, target y+ 100",
+                   "unit": "mm", "wind_speed": 60, "quality": "medium",
+                   "symmetry": True, "ground_plane": True, "ground": "static",
+                   "layers": {"count": 10, "expansion": 1.2,
+                              "target_y_plus": 100, "ground": True}},
+        "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
+                      "25° slant at 60 m/s"},
+    },
 ]
 
 
@@ -184,6 +199,7 @@ def main() -> None:
                 # v8.5: the y+ the mesh actually achieved, per wall patch.
                 "y_plus": res.get("y_plus"),
                 "y_plus_verdict": res.get("y_plus_verdict"),
+                "layer_coverage": res.get("layer_coverage"),
                 "layers": case["config"].get("layers"),
                 "error": detail.get("error"),
             })

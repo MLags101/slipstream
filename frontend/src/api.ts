@@ -158,6 +158,31 @@ export interface LayerOptions {
   min_thickness?: number;
   /** Also grow layers on the floor. Requires ground_plane. */
   ground?: boolean;
+  /**
+   * v8.6: aim the first cell at this y+. Switches the stack to absolute
+   * sizing (first layer in meters, from a flat-plate friction estimate)
+   * instead of a fraction of the surface cell. Requires `count`.
+   */
+  target_y_plus?: number;
+}
+
+/** v8.6: what a requested y+ target worked out to for a run. */
+export interface LayerTarget {
+  target_y_plus: number;
+  /** First layer height snappyHexMesh was given, in meters. */
+  first_layer_m: number;
+  expansion: number;
+  /** The requested count; `counts` holds what each patch could actually take. */
+  count: number;
+  /** Layers per patch, derived from the local cell size. */
+  counts?: Record<string, number>;
+  /** Cell size each patch's layers grow from, in meters. */
+  patch_cell_m?: Record<string, number>;
+  /**
+   * Patches whose cells are too coarse to reach the target. Only a finer
+   * surface mesh fixes these — more layers will not.
+   */
+  unreachable?: string[];
 }
 
 /** What the backend actually meshed for `config.refinement`. */
@@ -266,6 +291,14 @@ export interface RunResult {
    * "low" under 30, "ok" to 300, "high" above.
    */
   y_plus_verdict?: "low" | "ok" | "high" | null;
+  /**
+   * v8.6: what the layer stack achieved per patch, not what was requested.
+   * A low `coverage_pct` means a patchy stack, which is worse than none.
+   */
+  layer_coverage?: Record<
+    string,
+    { layers: number; layers_requested: number; coverage_pct: number }
+  > | null;
 }
 
 /** GET /api/runs/{id} */
@@ -328,6 +361,8 @@ export interface RunDetail {
   props_m?: PropDiskM[] | null;
   /** v8.1: refinement actually meshed (null when none was requested). */
   refinement?: RefinementInfo | null;
+  /** v8.6: what a y+ target worked out to (null when none was set). */
+  layer_target?: LayerTarget | null;
   /** v8.2: the finished mesh is on disk, so the run can be re-solved on it. */
   has_mesh?: boolean;
   mesh_cells: number | null;

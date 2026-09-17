@@ -190,6 +190,45 @@ def parse_y_plus(y_plus_log: str | Path) -> dict[str, dict] | None:
     return out or None
 
 
+# snappyHexMesh's final layer table, e.g.
+#     model  24781    6        5.12     0.00557   90.8
+# (patch, faces, layers wanted, layers achieved, overall thickness, % covered).
+# An earlier table prints the same patch with one column fewer (no coverage),
+# so requiring all five numbers picks the final one and not the request.
+_LAYER_ROW_RE = re.compile(
+    r"^\s*(\w+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+([\d.eE+-]+)\s+([\d.]+)\s*$",
+    re.MULTILINE)
+
+# Below this fraction of faces covered, the layer stack is patchy enough that
+# the wall treatment varies across the surface — measured worse than no layers
+# at all on the Ahmed body's floor (62.4% coverage sent Cd 12% the wrong way).
+LAYER_COVERAGE_LOW = 70.0
+
+
+def parse_layer_coverage(snappy_log: str | Path) -> dict[str, dict] | None:
+    """Per-patch {layers, coverage_pct} that snappyHexMesh actually grew.
+
+    Requesting N layers does not mean getting them: snappy inserts them by
+    displacing the mesh, and gives up where it cannot. A patchy stack is worse
+    than none, so what was achieved is reported, not what was asked for.
+    """
+    try:
+        text = Path(snappy_log).read_text(errors="replace")
+    except OSError:
+        return None
+    out: dict[str, dict] = {}
+    for name, _faces, wanted, got, _thick, pct in _LAYER_ROW_RE.findall(text):
+        try:
+            entry = {"layers": float(got), "layers_requested": int(wanted),
+                     "coverage_pct": float(pct)}
+        except ValueError:
+            continue
+        if entry["coverage_pct"] > 100.0:  # not a percentage column
+            continue
+        out[name] = entry  # the last table printed is the final state
+    return out or None
+
+
 def y_plus_verdict(y_plus: dict[str, dict] | None) -> str | None:
     """One word for the model patch's average y+: "low", "ok" or "high".
     Drives the wall-function warning in the UI."""
@@ -267,6 +306,7 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     qdyn = 0.5 * rho * u * u * ref_area
     drag_pressure, drag_viscous = drag_breakdown(case_dir)
     y_plus = parse_y_plus(Path(case_dir) / "log.yPlus")
+    layer_cov = parse_layer_coverage(Path(case_dir) / "log.snappyHexMesh")
 
     # Half-model (symmetry) solve: the forceCoeffs/forces cover only the +Y
     # half, so double the streamwise/vertical loads to recover the full model.
@@ -310,6 +350,8 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
         # postProcess failed — the UI omits the panel rather than guessing.
         "y_plus": y_plus,
         "y_plus_verdict": y_plus_verdict(y_plus),
+        # What the layer stack achieved, not what was requested.
+        "layer_coverage": layer_cov,
         "stopped_early": bool(stopped_early),
         "symmetry": symmetry,
     }

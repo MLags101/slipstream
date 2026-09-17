@@ -1,4 +1,4 @@
-import type { LayerOptions, RunResult } from "../api";
+import type { LayerOptions, LayerTarget, RunResult } from "../api";
 
 /**
  * Prism layer presets. These are the boundary-layer cells snappyHexMesh grows
@@ -16,6 +16,12 @@ export interface LayerPreset {
 }
 
 export const LAYER_PRESETS: LayerPreset[] = [
+  {
+    id: "target",
+    label: "Aim for a y+",
+    hint: "Sizes the first cell in millimeters to land at the y+ you ask for, instead of as a fraction of the surface cell. This is the only mode that can actually move y+ into the valid band.",
+    settings: { count: 10, expansion: 1.2, target_y_plus: 100 },
+  },
   {
     id: "none",
     label: "None",
@@ -59,8 +65,13 @@ export const LAYER_YPLUS_CAVEAT =
   "Layer presets change y+ by about a third at most. They cannot pull a badly " +
   "out-of-range y+ into the valid band — that needs a finer surface mesh.";
 
-/** The layer settings the backend applies when none are sent. */
-export const LAYER_DEFAULTS: Required<Omit<LayerOptions, "ground">> = {
+/**
+ * The layer settings the backend applies when none are sent. `target_y_plus`
+ * has no default: absent means relative sizing, which is the default mode.
+ */
+export const LAYER_DEFAULTS: Required<
+  Omit<LayerOptions, "ground" | "target_y_plus">
+> = {
   count: 3,
   expansion: 1.2,
   final_thickness: 0.3,
@@ -69,9 +80,10 @@ export const LAYER_DEFAULTS: Required<Omit<LayerOptions, "ground">> = {
 
 /** Allowed ranges; must match foamcase.LAYER_LIMITS. */
 export const LAYER_LIMITS: Record<
-  keyof typeof LAYER_DEFAULTS,
+  keyof typeof LAYER_DEFAULTS | "target_y_plus",
   [number, number]
 > = {
+  target_y_plus: [1, 1000],
   count: [0, 12],
   expansion: [1.0, 2.0],
   final_thickness: [0.05, 1.0],
@@ -88,6 +100,8 @@ export function presetIdFor(layers: LayerOptions | undefined): string {
   // `ground` is an independent checkbox, not part of the preset identity.
   const { ground: _ground, ...rest } = layers;
   if (Object.keys(rest).length === 0) return "standard";
+  // Any y+ target is the target mode, whatever number was asked for.
+  if (rest.target_y_plus != null) return "target";
   for (const p of LAYER_PRESETS) {
     const want = p.settings ?? LAYER_DEFAULTS;
     const keys = new Set([...Object.keys(want), ...Object.keys(rest)]);
@@ -151,6 +165,66 @@ export function yPlusText(result: RunResult): string | null {
       "layer thickness, to bring it down."
     );
   return head;
+}
+
+/**
+ * Below this fraction of faces covered, the stack is patchy enough that the
+ * wall treatment varies across the surface. Must match post.LAYER_COVERAGE_LOW.
+ */
+export const LAYER_COVERAGE_LOW = 70;
+
+/**
+ * Warning when snappyHexMesh failed to grow the requested layers over enough
+ * of a patch. Measured on the Ahmed body: 62.4% coverage on the floor moved Cd
+ * 12% the wrong way, worse than having no layers there at all.
+ */
+export function layerCoverageWarning(result: RunResult): string | null {
+  const cov = result.layer_coverage;
+  if (!cov) return null;
+  const bad = Object.entries(cov).filter(
+    ([, v]) => v.coverage_pct < LAYER_COVERAGE_LOW,
+  );
+  if (bad.length === 0) return null;
+  const parts = bad.map(
+    ([patch, v]) =>
+      `${patch} got ${v.layers.toFixed(1)} of ${v.layers_requested} layers over ` +
+      `${v.coverage_pct.toFixed(0)}% of its faces`,
+  );
+  return (
+    `Prism layers did not grow everywhere: ${parts.join("; ")}. A patchy stack ` +
+    "treats the wall differently from place to place, which is worse than having " +
+    "no layers at all — ask for fewer layers, or a finer mesh so they fit."
+  );
+}
+
+/**
+ * What a y+ target resolved to, and a warning when some patch's cells are too
+ * coarse to reach it. Measured on the Ahmed body: the model reached y+ 109
+ * against a target of 100, while the floor — whose cells are ~150x the needed
+ * first layer — stalled at y+ 1868 with only 4.3 of 10 layers grown.
+ */
+export function layerTargetText(
+  target: LayerTarget | null | undefined,
+): { summary: string; warning: string | null } | null {
+  if (!target) return null;
+  const mm = target.first_layer_m * 1000;
+  const counts = target.counts ?? {};
+  const perPatch = Object.entries(counts)
+    .map(([p, n]) => `${p} ${n}`)
+    .join(", ");
+  const summary =
+    `Aiming for y+ ${target.target_y_plus}: first layer ${mm.toFixed(3)} mm` +
+    (perPatch ? ` · layers ${perPatch}` : "");
+  const bad = target.unreachable ?? [];
+  if (bad.length === 0) return { summary, warning: null };
+  return {
+    summary,
+    warning:
+      `The ${bad.join(" and ")} cells are too coarse to reach y+ ` +
+      `${target.target_y_plus}. The layers cannot bridge from a ` +
+      `${mm.toFixed(3)} mm first cell up to them, so most of the stack will ` +
+      "not grow. Use a finer mesh quality, or accept the y+ reported there.",
+  };
 }
 
 /**
