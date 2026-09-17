@@ -125,11 +125,49 @@ the published reference area of 0.112 m², so the geometry and coefficients line
   floor 12% of the body height (35 mm) below it instead of the experiment's 50 mm.
 - **Wall functions, not resolved boundary layers.** The default three prism layers keep
   meshes small enough for a laptop, which limits skin-friction accuracy. Since v8.5 the
-  layer stack is adjustable (up to 12 layers, with the option to grow them on the floor
-  too), and every run reports the y+ it actually achieved on each wall patch, with a
-  warning when it falls outside the 30–300 band the wall functions are valid in. That is
-  the number behind most of the errors above: the Ahmed body's floor ran at y+ ≈ 3000, and
-  the Re = 1×10⁵ sphere at y+ ≈ 1.5 — opposite ends of the same problem. Raising or
-  lowering y+ into the band is now something you can do from the run setup, but note that
-  it changes how the wall is modeled, not whether the turbulence model can predict
-  transition.
+  layer stack is adjustable and every run reports the y+ it achieved on each wall patch,
+  with a warning when it falls outside the 30–300 band the wall functions are valid in.
+  The Ahmed body's floor runs at y+ ≈ 3000 and the Re = 1×10⁵ sphere at y+ ≈ 1.5 — opposite
+  ends of the same problem. **Adjusting the layers does not fix this**; see below.
+
+## What prism layers actually do, measured
+
+The obvious hypothesis was that the Ahmed body's error comes from its floor sitting at
+y+ ≈ 3000, and that growing prism layers on the floor would fix it. That was tested
+directly, holding the geometry, speed, quality and everything else fixed and changing only
+the layer stack. It is not what happened.
+
+| Layers | Cd | vs measured 0.285 | floor y+ | floor coverage | cells |
+| --- | --- | --- | --- | --- | --- |
+| default (3, model only) | 0.297 | +4.3% | 3122 | — | 211,916 |
+| 6 + floor | 0.270 | −5.2% | 615 | 90.1% | 277,497 |
+| 12 + floor | 0.332 | +16.5% | 671 | 62.4% | 373,513 |
+
+Three things worth stating plainly:
+
+1. **Cd did not converge on the measured value — it crossed it and then ran away.** A single
+   meshing choice moved Cd by 9%, then by another 23%. That spread is larger than the
+   disagreement with experiment that prompted the investigation, so "within 4% of published
+   data" was never as firm as it looked.
+
+2. **Deeper stacks made it worse, because the layers stopped growing.** At 12 layers
+   snappyHexMesh covered only 62.4% of the floor, against 90.1% at 6. A patchy layer stack
+   gives an inconsistent wall treatment, which is worse than a uniformly coarse one. More
+   layers is not monotonically better, and the coverage figure in the snappyHexMesh log
+   matters as much as the requested count.
+
+3. **The layer controls cannot target a y+ at all.** Under `relativeSizes` the first cell
+   height is `finalLayerThickness / expansionRatio^(n-1)` — a fraction of the local surface
+   cell. Across the shipped presets that fraction only spans 0.208 → 0.142, so y+ moves by
+   about a third at most. Pulling y+ ≈ 3000 down to 300 needs roughly a 10× thinner first
+   cell. That requires an absolute first-layer height (`relativeSizes false`) sized from a
+   target y+, which Slipstream does not do yet. The UI says so rather than implying the
+   presets can do more than they can.
+
+Run-to-run variation is worth noting alongside all of this: the medium Ahmed run above gives
+Cd 0.297, where the mesh-independence sweep in the same configuration gave 0.306. That ~3%
+spread is the same order as several of the differences being discussed.
+
+The honest summary is that the y+ report is the useful part of v8.5 — it makes a real
+problem visible and measurable. The layer controls adjust the mesh, but they are not yet a
+way to fix the problem the report exposes.

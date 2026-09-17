@@ -13,6 +13,7 @@ import {
   LAYER_DEFAULTS,
   LAYER_LIMITS,
   LAYER_PRESETS,
+  LAYER_YPLUS_CAVEAT,
 } from "../lib/layers";
 
 /** Keep a nudged angle in (-180, 180] so the inputs stay readable. */
@@ -1416,6 +1417,9 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
               <span className="config-note">
                 {LAYER_PRESETS.find((p) => p.id === layerPreset)?.hint}
               </span>
+            )}
+            {layerPreset !== "none" && (
+              <span className="config-note">{LAYER_YPLUS_CAVEAT}</span>
             )}
             {layerPreset === CUSTOM_PRESET && (
               <>

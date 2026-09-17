@@ -31,18 +31,33 @@ export const LAYER_PRESETS: LayerPreset[] = [
   {
     id: "fine",
     label: "Fine — 6 layers",
-    hint: "A thinner first cell for a lower y+. Use for streamlined shapes — wings, hulls, fairings — where skin friction and separation matter.",
+    hint: "A better-resolved wall layer for streamlined shapes — wings, hulls, fairings — where skin friction and separation matter. Lowers y+ only about a quarter; see the note below.",
     settings: { count: 6, expansion: 1.2, final_thickness: 0.4 },
   },
   {
     id: "veryFine",
     label: "Very fine — 10 layers",
-    hint: "Deep stack aimed at the low end of the wall-function range. Slow to mesh and can fail to grow on sharp corners — check the y+ report afterwards.",
+    hint: "Deepest stack. Slow to mesh, and on awkward geometry snappyHexMesh may fail to grow it over the whole surface, which is worse than fewer layers grown cleanly — check the y+ report and the coverage afterwards.",
     settings: { count: 10, expansion: 1.15, final_thickness: 0.5 },
   },
 ];
 
 export const CUSTOM_PRESET = "custom";
+
+/**
+ * What the presets actually do to y+, measured on the Ahmed body.
+ *
+ * Under snappyHexMesh's relativeSizes the first cell height is
+ * `final_thickness / expansion^(count-1)`, a fraction of the surface cell. Across
+ * these presets that only spans 100% -> 68%, and y+ scales with it, so no preset
+ * shifts y+ by more than about a third. Moving a y+ of 3000 into the 30-300 band
+ * needs roughly a 10x thinner first cell, which needs an absolute first-layer
+ * height, not a relative one. Until that exists, say so rather than implying the
+ * presets can target a y+.
+ */
+export const LAYER_YPLUS_CAVEAT =
+  "Layer presets change y+ by about a third at most. They cannot pull a badly " +
+  "out-of-range y+ into the valid band — that needs a finer surface mesh.";
 
 /** The layer settings the backend applies when none are sent. */
 export const LAYER_DEFAULTS: Required<Omit<LayerOptions, "ground">> = {

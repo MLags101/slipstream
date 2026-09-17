@@ -74,6 +74,21 @@ CASES = [
         "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
                       "25° slant at 60 m/s"},
     },
+    # 6 floor layers left the floor at y+ ~615, still well outside the 30-300
+    # band, and Cd crossed the measured value rather than settling. This pushes
+    # the floor further to find out whether Cd stabilizes once y+ is valid.
+    {
+        "name": "ahmed_25_medium_deepfloor",
+        "stl": "ahmed_25.stl",
+        "single": True,
+        "config": {"name": "Validation: Ahmed 25°, medium, 12 layers + floor",
+                   "unit": "mm", "wind_speed": 60, "quality": "medium",
+                   "symmetry": True, "ground_plane": True, "ground": "static",
+                   "layers": {"count": 12, "expansion": 1.15,
+                              "final_thickness": 0.5, "ground": True}},
+        "reference": {"cd": 0.285, "source": "Ahmed, Ramm & Faltin (1984), SAE 840300; "
+                      "25° slant at 60 m/s"},
+    },
 ]
 
 
