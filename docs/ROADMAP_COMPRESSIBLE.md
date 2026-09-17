@@ -174,11 +174,30 @@ incompressible results within a few percent at low speed. Add to `docs/VALIDATIO
 Density-based, transient, shock-capturing. This is what produces Mach cones and the
 schlieren imagery. **It is a different solver class, not a setting.**
 
+### 2.0 Already checked on this machine
+
+Do not re-derive these; they are measured, not assumed.
+
+- **`rhoCentralFoam` ships with the installed OpenFOAM** (v2606, `/opt/homebrew/bin/openfoam`),
+  alongside `rhoSimpleFoam`, `rhoPimpleFoam` and `sonicFoam`.
+- **Relevant tutorials exist** under `$FOAM_TUTORIALS/compressible/rhoCentralFoam`:
+  `wedge15Ma5` (15 degree wedge at Mach 5), `obliqueShock`, `forwardStep`,
+  `biconic25-55Run35` (a cone with published data), `shockTube`.
+- **The wedge tutorial runs in 4.9 s** — 2000 time steps on 4800 cells. The cost warning
+  below applies to 3D; 2D shock cases are cheap enough to iterate on freely.
+- **The validation kit is written and checked**: `examples/validation/supersonic.py`.
+  `wedge_shock_angle` reproduces published theta-beta-M values to 0.01 degrees,
+  `cone_shock_angle` integrates Taylor-Maccoll and hits the textbook 33.9 degrees for a
+  15 degree cone at Mach 2, and `measure_shock_angle` pulls the angle out of a solved
+  density field. Against the wedge tutorial it measured **24.54 degrees versus the exact
+  24.32** — 0.9% error. Start Phase 2 validation from this, not from scratch.
+
 ### 2.1 Expect a different cost model
 
 `rhoCentralFoam` is Courant-limited and explicit in practice. Today's steady runs converge
 in a few hundred iterations; a supersonic run needs tens of thousands of small time steps.
-Budget hours, not minutes, and say so in the UI before the user starts one.
+For 2D that is seconds (measured above). For a 3D body budget hours, not minutes, and say
+so in the UI before the user starts one.
 
 `controlDict` needs `adjustTimeStep yes; maxCo 0.2;` and an `endTime` in seconds derived
 from flow-through time (domain length / freestream speed), typically 3–5 flow-throughs.
@@ -215,21 +234,37 @@ cheap once density is a solved field.
 Add the colormap to `frontend/src/lib/colormaps.ts` and unit-test it alongside the existing
 ones.
 
-### 2.5 Validation — the cone at Mach 2
+### 2.5 Validation — wedge first, then the cone
+
+**Do the wedge before the cone.** A wedge's shock angle is algebraic (no ODE), the tutorial
+already exists, it runs in seconds, and the whole measurement chain is proven against it
+(0.9% error, above). It is the fastest possible proof that the solver is set up right.
+
+Sequence:
+
+1. Reproduce `wedge15Ma5` through Slipstream's own case generation and confirm the measured
+   angle still lands within ~1% of `wedge_shock_angle(5, 15)`.
+2. Then the cone, which is the one worth showing: `cone_shock_angle` gives the exact answer
+   and `biconic25-55Run35` is a ready-made harder case with published data.
+
+#### The cone at Mach 2
 
 Use a sharp cone at zero incidence. The **Taylor–Maccoll** equations give an exact
 analytical shock angle for a supersonic cone, so this is a closed-form check, not a
 comparison against a digitized chart.
 
 - Half-angle 15°, Mach 2.0, sea-level conditions.
-- Theory: shock angle ≈ 33.9° (solve Taylor–Maccoll numerically to confirm the exact value
-  for the chosen half-angle; do not quote this figure without recomputing it).
-- Measure the shock angle from the solution by finding the density-gradient ridge in a
-  centerline slice.
+- Theory: `cone_shock_angle(2.0, 15.0)` returns 33.91°, matching the textbook 33.9°.
+- Measure with `measure_shock_angle` on a centerline slice.
 - Report measured vs analytical in `docs/VALIDATION.md` with the schlieren image.
 
 Add `examples/validation/make_models.py` support for generating the cone STL, and a case
 entry in `run_validation.py` following the `single: True` pattern already there.
+
+A caution learned the hard way on the prism layers: `supersonic.py`'s cone values for Mach
+numbers other than 2 have not been checked against published tables, only against the
+bracket (Mach angle < cone shock < wedge shock). Check one against a table before quoting
+it anywhere public.
 
 ---
 
