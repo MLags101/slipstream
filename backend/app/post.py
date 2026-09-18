@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import foamcase
 from .foamcase import P_AMBIENT
 
 # --------------------------------------------------------------------------
@@ -332,13 +333,24 @@ def compute_result(case_dir: str | Path, config: dict, model: dict,
     length = max(bx1 - bx0, 1e-9)
     nu = float(config.get("nu") or 1.5e-5)
     reynolds = u * length / nu
+    # A transient (supersonic) solve advances real seconds, not iterations, so
+    # "iteration 0.538" is meaningless. Report the step count instead and carry
+    # the simulated time separately.
+    transient = foamcase.flow_model(config) == "supersonic"
+    end_time_s = float(coeffs["Time"][-1])
+    t_freestream = float(config.get("temperature") or foamcase.T_AMBIENT)
+    mach = u / foamcase.speed_of_sound(t_freestream)
     return {
         "cd": cd, "cl": cl, "cs": cs,
         "drag_N": cd * qdyn, "lift_N": cl * qdyn, "side_N": cs * qdyn,
         "drag_pressure_N": drag_pressure, "drag_viscous_N": drag_viscous,
         "frontal_area_m2": frontal, "ref_area_m2": ref_area,
         "wind_speed": u, "rho": rho,
-        "iterations": int(coeffs["Time"][-1]),
+        "iterations": n if transient else int(end_time_s),
+        "transient": transient,
+        "end_time_s": end_time_s if transient else None,
+        "flow_model": foamcase.flow_model(config),
+        "mach": mach,
         "mesh_cells": mesh_cells,
         "runtime_s": round(runtime_s, 1),
         "cd_std_last20pct": cd_std,

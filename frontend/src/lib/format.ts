@@ -68,3 +68,12 @@ export function formatTimestamp(epochSeconds: number): string {
 export function shortRunId(id: string): string {
   return id.split("-").pop() || id;
 }
+
+/**
+ * Wind speed for display. Supersonic runs derive speed from a Mach number, so
+ * it arrives as 476.4520273365369 — never show that raw.
+ */
+export function formatSpeed(v: number): string {
+  if (!Number.isFinite(v)) return "—";
+  return `${v >= 100 ? Math.round(v) : Math.round(v * 10) / 10} m/s`;
+}

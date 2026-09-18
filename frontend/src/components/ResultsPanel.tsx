@@ -5,6 +5,7 @@ import {
   formatDuration,
   formatForce,
   formatInt,
+  formatSpeed,
 } from "../lib/format";
 import { downloadText, resultToCsv, slugify } from "../lib/download";
 import { layerCoverageWarning, yPlusRows, yPlusText } from "../lib/layers";
@@ -19,6 +20,9 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
   const refDiffers =
     result.ref_area_m2 != null &&
     Math.abs(result.ref_area_m2 - result.frontal_area_m2) > 1e-9;
+
+  const mach = result.mach ?? result.wind_speed / 340.3;
+  const flowModel = result.flow_model ?? "incompressible";
 
   const stats: { label: string; value: string }[] = [
     { label: "Lift coefficient Cl", value: formatCoeff(result.cl) },
@@ -39,6 +43,9 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
           },
         ]
       : []),
+    ...(result.flow_model && result.flow_model !== "incompressible"
+      ? [{ label: "Mach number", value: mach.toFixed(2) }]
+      : []),
     { label: "Mesh cells", value: formatInt(result.mesh_cells) },
     // One row per wall patch, model first. Absent on runs solved before y+
     // was measured, which is most older runs.
@@ -55,7 +62,7 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
     },
     {
       label: "Conditions",
-      value: `${result.wind_speed} m/s · ρ ${result.rho}`,
+      value: `${formatSpeed(result.wind_speed)} · ρ ${result.rho}`,
     },
   ];
 
@@ -66,11 +73,21 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
 
   // Advisories that affect how much to trust the numbers.
   const warnings: string[] = [];
-  if (result.wind_speed > 100)
+  // Compressibility only matters when an INCOMPRESSIBLE solver is being used
+  // outside its range. Saying it about a compressible run is simply wrong, and
+  // that is what this warning used to do.
+  if (flowModel === "incompressible" && mach > 0.3)
     warnings.push(
-      `At ${result.wind_speed} m/s the flow is compressible (~Mach ${(
-        result.wind_speed / 343
-      ).toFixed(2)}); this incompressible solver over-simplifies it — treat results as indicative.`,
+      `At ${formatSpeed(result.wind_speed)} the flow is compressible (Mach ` +
+        `${mach.toFixed(2)}), and this run used the incompressible solver, ` +
+        "which ignores density changes — treat the numbers as indicative. " +
+        "Re-run with a compressible flow model for a result you can rely on.",
+    );
+  if (flowModel === "transonic" && mach > 1.2)
+    warnings.push(
+      `Mach ${mach.toFixed(2)} is past what the steady transonic solver ` +
+        "handles well; strong shocks need the supersonic (density-based) " +
+        "model to stay sharp.",
     );
   const mq = result.mesh_quality;
   if (mq?.rating === "poor")
@@ -141,7 +158,13 @@ export function ResultsPanel({ result, name }: { result: RunResult; name: string
           </div>
           <div className="hero-value mono">{formatCoeff(result.cd)}</div>
           <div className="hero-sub">
-            averaged over final 20% of {formatInt(result.iterations)} iterations
+            {result.transient
+              ? `averaged over the final 20% of ${
+                  result.end_time_s?.toPrecision(3) ?? "?"
+                } s (${formatInt(result.iterations)} time steps)`
+              : `averaged over final 20% of ${formatInt(
+                  result.iterations,
+                )} iterations`}
             {result.stopped_early && (
               <span className="converged-note"> · stopped early (converged)</span>
             )}

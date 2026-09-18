@@ -292,6 +292,14 @@ export interface RunResult {
   symmetry?: boolean;
   /** Reynolds number on the model's streamwise length. */
   reynolds?: number;
+  /** v9: which solver produced this result. */
+  flow_model?: "incompressible" | "transonic" | "supersonic";
+  /** v9: freestream Mach number. */
+  mach?: number;
+  /** v9: true for a transient solve, where `iterations` counts time steps. */
+  transient?: boolean;
+  /** v9: simulated time (s); null for steady runs. */
+  end_time_s?: number | null;
   mesh_quality?: {
     max_non_ortho?: number;
     max_skewness?: number;
