@@ -8,7 +8,7 @@ FoamFile
 }
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
-application     simpleFoam;
+application     ${application};
 
 startFrom       latestTime;
 
@@ -16,13 +16,7 @@ startTime       0;
 
 stopAt          endTime;
 
-endTime         ${endTime};
-
-deltaT          1;
-
-writeControl    timeStep;
-
-writeInterval   ${endTime};
+${timeControls}
 
 purgeWrite      0;
 

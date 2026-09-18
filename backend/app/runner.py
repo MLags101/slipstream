@@ -444,12 +444,17 @@ class Runner:
         iterations = params.pop("iterations")
         refinement_info = params.pop("refinement_info")
         layer_target = params.pop("layer_target")
+        compressible = params.pop("compressible")
+        flow_model = params.pop("flow_model")
+        mach = params.pop("mach")
+        solver = foamcase.FLOW_SOLVER[flow_model]
 
         self.update(run_id, model=model, progress=0.06,
                     refinement=refinement_info if config.get("refinement") else None,
-                    layer_target=layer_target,
+                    layer_target=layer_target, mach=mach,
                     message="Generating OpenFOAM case")
-        foamcase.generate_case(case, params)
+        foamcase.generate_case(case, params, compressible=compressible,
+                               supersonic=flow_model == "supersonic")
         if config.get("ground_plane"):
             # Rolling road unless the user asked for a fixed ground.
             foamcase.add_ground_plane(
@@ -508,7 +513,7 @@ class Runner:
         self._foam(case, "decomposePar -force", "log.decomposePar", run_id)
 
         n = foamcase.NPROCS
-        self.update(run_id, message=f"Running simpleFoam on {n} cores "
+        self.update(run_id, message=f"Running {solver} on {n} cores "
                                     f"(0/{iterations} iterations)")
 
         u0 = float(config["wind_speed"])
@@ -545,7 +550,7 @@ class Runner:
                 frac = min(1.0, it / iterations)
                 suffix = " - converged, stopping early" if stop["requested"] else ""
                 self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),
-                            message=f"Running simpleFoam on {n} cores "
+                            message=f"Running {solver} on {n} cores "
                                     f"({it}/{iterations} iterations){suffix}")
                 if not stop["requested"] and self._converged(hist["cd"], it, iterations):
                     stop["requested"] = self._request_stop(case)
@@ -556,13 +561,13 @@ class Runner:
         # to slow the solve ~50x on this machine. 6 ranks on 8 cores fit without it;
         # fall back to --oversubscribe only if the plain launch is refused.
         try:
-            self._foam(case, f"mpirun -np {n} simpleFoam -parallel",
-                       "log.simpleFoam", run_id, progress_cb=solve_progress)
+            self._foam(case, f"mpirun -np {n} {solver} -parallel",
+                       f"log.{solver}", run_id, progress_cb=solve_progress)
         except RuntimeError:
             if post.read_history(case)["iters"]:
                 raise  # solver genuinely diverged/failed mid-run
-            self._foam(case, f"mpirun -np {n} --oversubscribe simpleFoam -parallel",
-                       "log.simpleFoam", run_id, progress_cb=solve_progress)
+            self._foam(case, f"mpirun -np {n} --oversubscribe {solver} -parallel",
+                       f"log.{solver}", run_id, progress_cb=solve_progress)
 
         self.update(run_id, progress=0.9, status="postprocessing",
                     message="Reconstructing fields")
@@ -579,7 +584,7 @@ class Runner:
         # (one time step, serial) and non-fatal — a run without it just
         # reports y+ as unknown.
         self.update(run_id, message="Measuring y+ on the walls")
-        self._foam(case, "simpleFoam -postProcess -func yPlus -latestTime",
+        self._foam(case, f"{solver} -postProcess -func yPlus -latestTime",
                    "log.yPlus", run_id, check=False)
 
         # ---- postprocessing (0.9 - 1.0) -----------------------------------
@@ -587,10 +592,12 @@ class Runner:
         rho = float(config.get("rho") or 1.225)
         u_inf = float(config["wind_speed"])
         symmetry = bool(config.get("symmetry"))
-        surface = post.build_surface_viz(case, rho, u_inf, symmetry=symmetry)
+        surface = post.build_surface_viz(case, rho, u_inf, symmetry=symmetry,
+                                         compressible=compressible)
         (rd / "viz_surface.json").write_text(json.dumps(surface))
         for axis in ("y", "z"):
-            sl = post.build_slice_viz(case, axis, rho, symmetry=symmetry)
+            sl = post.build_slice_viz(case, axis, rho, symmetry=symmetry,
+                                      compressible=compressible)
             (rd / f"viz_slice_{axis}.json").write_text(json.dumps(sl))
 
         self.update(run_id, progress=0.98, message="Computing final coefficients")

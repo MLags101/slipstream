@@ -1,0 +1,42 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    object      p;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Supersonic: nothing propagates upstream, so the inlet is fully specified and
+// the outlet must NOT fix pressure. A fixedValue outlet reflects shocks back
+// into the domain and corrupts the solution.
+dimensions      [1 -1 -2 0 0 0 0];
+
+internalField   uniform ${pAmb};
+
+boundaryField
+{
+    inlet
+    {
+        type            fixedValue;
+        value           uniform ${pAmb};
+    }
+    outlet
+    {
+        type            zeroGradient;
+    }
+    walls
+    {
+        // Supersonic far field: outflow, not a wall. A slip wall reflects any
+        // shock that reaches it straight back into the solution; zeroGradient
+        // lets it leave, which is what keeps the domain small.
+        type            zeroGradient;
+    }
+    model
+    {
+        type            zeroGradient;
+    }
+}
+
+// ************************************************************************* //

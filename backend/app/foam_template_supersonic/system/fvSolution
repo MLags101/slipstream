@@ -1,0 +1,31 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      fvSolution;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+solvers
+{
+    // Density-based: the conserved variables are advanced explicitly, so
+    // these are trivial diagonal solves. Only the diffusive corrections and
+    // turbulence need a real solver.
+    "(rho|rhoU|rhoE)"
+    {
+        solver          diagonal;
+    }
+
+    "(U|e|h|k|omega)"
+    {
+        solver          smoothSolver;
+        smoother        GaussSeidel;
+        nSweeps         2;
+        tolerance       1e-9;
+        relTol          0.01;
+    }
+}
+
+// ************************************************************************* //

@@ -12,6 +12,9 @@ TEMPLATE_DIR = Path(__file__).parent / "foam_template"
 # 0/p, the T and alphat fields, thermophysical properties and compressible
 # schemes. Files here replace their base counterparts.
 COMPRESSIBLE_DIR = Path(__file__).parent / "foam_template_compressible"
+# Applied after COMPRESSIBLE_DIR for supersonic runs: density-based schemes and
+# boundary conditions that do not reflect shocks back into the domain.
+SUPERSONIC_DIR = Path(__file__).parent / "foam_template_supersonic"
 
 # What solves each flow model, and how compressible it is.
 FLOW_MODELS = ("incompressible", "transonic", "supersonic")
@@ -28,6 +31,37 @@ PRANDTL = 0.71
 P_AMBIENT = 101325.0
 T_AMBIENT = 288.15
 R_UNIVERSAL = 8314.462618  # J/(kmol K), OpenFOAM's units for molWeight
+
+
+# Supersonic runs are transient and Courant-limited. The solution is advanced
+# until the flow has swept the domain this many times, which is what it takes
+# for a shock structure to establish and stop moving.
+FLOW_THROUGHS = 3.0
+# Kurganov's central-upwind flux is stable well above the 0.2 the tutorials
+# use; 0.4 halves the wall clock and still resolves the shock cleanly.
+SUPERSONIC_MAX_CO = 0.4
+# Frames written per flow-through. Enough to see the shock settle without
+# filling the disk with fields nobody looks at.
+SUPERSONIC_WRITES = 4
+
+
+def _time_controls(config: dict, iterations: int, domain_len: float,
+                   u_inf: float) -> str:
+    """The controlDict time block: iteration counting for the steady solvers,
+    Courant-limited real time for the supersonic one."""
+    if flow_model(config) != "supersonic":
+        return (f"endTime         {iterations};\n\n"
+                f"deltaT          1;\n\n"
+                f"writeControl    timeStep;\n\n"
+                f"writeInterval   {iterations};")
+    end_time = FLOW_THROUGHS * domain_len / max(u_inf, 1e-9)
+    return (f"endTime         {fmt(end_time)};\n\n"
+            f"deltaT          {fmt(end_time / 1e6)};\n\n"
+            f"adjustTimeStep  yes;\n\n"
+            f"maxCo           {fmt(SUPERSONIC_MAX_CO)};\n\n"
+            f"writeControl    adjustableRunTime;\n\n"
+            f"writeInterval   "
+            f"{fmt(end_time / (FLOW_THROUGHS * SUPERSONIC_WRITES))};")
 
 
 def flow_model(config: dict) -> str:
@@ -54,6 +88,40 @@ QUALITY = {
 }
 
 NPROCS = 6
+
+
+# Supersonic domain, in body lengths. Nothing propagates upstream, so the
+# inlet can sit close; there is no subsonic wake to capture, so the outlet
+# does too. The half-extent must still contain the Mach cone out to the
+# outlet, or the shock reflects off the side walls back into the solution.
+SUPERSONIC_UPSTREAM_L = 1.0
+SUPERSONIC_DOWNSTREAM_L = 3.0
+# Surface refinement is capped for supersonic: the physics of interest is the
+# shock standing off in the field, not the boundary layer, and every extra
+# refinement level halves the Courant-limited time step.
+SUPERSONIC_SURF_MAX = 2
+
+
+def supersonic_bounds(model: dict, mach: float,
+                      symmetry: bool = False) -> list[list[float]]:
+    """Tight domain for a supersonic run.
+
+    The side boundaries are supersonic outflow, not walls (see the supersonic
+    0/ overlay), so the shock may leave through them without reflecting. The
+    half-extent therefore only has to keep the shock inside for long enough to
+    see and measure it, not all the way to the outlet — sizing it to contain
+    the whole Mach cone makes the domain wider than it is long and costs far
+    more cells than it buys.
+    """
+    (bx0, by0, bz0), (bx1, by1, bz1) = model["bbox_m"]
+    L = bx1 - bx0
+    dx0 = bx0 - SUPERSONIC_UPSTREAM_L * L
+    dx1 = bx1 + SUPERSONIC_DOWNSTREAM_L * L
+    mu = math.asin(min(1.0, 1.0 / max(mach, 1.0001)))
+    spread = 0.45 * (dx1 - bx0) * math.tan(mu)
+    half = max(spread, 0.9 * max(by1 - by0, bz1 - bz0))
+    dy0 = 0.0 if symmetry else -half
+    return [[dx0, dy0, -half], [dx1, half, half]]
 
 
 def domain_bounds(model: dict, ground: bool = False,
@@ -354,16 +422,29 @@ def compute_params(model: dict, config: dict,
     U0 = float(config["wind_speed"])
     rho = float(config.get("rho") or 1.225)
     nu = float(config.get("nu") or 1.5e-5)
-    q = QUALITY[config["quality"]]
+    q = dict(QUALITY[config["quality"]])
 
     compressible = is_compressible(config)
     T0 = float(config.get("temperature") or T_AMBIENT)
     mach = U0 / speed_of_sound(T0)
 
+    if flow_model(config) == "supersonic":
+        q["surf_max"] = min(q["surf_max"], SUPERSONIC_SURF_MAX)
+        q["surf_min"] = min(q["surf_min"], SUPERSONIC_SURF_MAX)
+
     ground = bool(config.get("ground_plane"))
     symmetry = bool(config.get("symmetry"))
-    (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(
-        model, ground=ground, symmetry=symmetry)
+    supersonic = flow_model(config) == "supersonic"
+    if supersonic:
+        # The subsonic domain (4L up, 9L down) is both unnecessary and
+        # ruinously expensive here: every extra domain length is more
+        # Courant-limited time steps for flow that carries no information
+        # upstream anyway.
+        (dx0, dy0, dz0), (dx1, dy1, dz1) = supersonic_bounds(
+            model, mach, symmetry=symmetry)
+    else:
+        (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(
+            model, ground=ground, symmetry=symmetry)
 
     domain_len = dx1 - dx0
     cell = domain_len / 70.0
@@ -455,6 +536,8 @@ def compute_params(model: dict, config: dict,
         "U0": fmt(U0), "rho": fmt(rho), "nu": fmt(nu),
         "k0": fmt(k0), "omega0": fmt(omega0),
         "endTime": str(q["iterations"]),
+        "application": FLOW_SOLVER[flow_model(config)],
+        "timeControls": _time_controls(config, q["iterations"], domain_len, U0),
         "aref": fmt(ref_area), "lref": fmt(L),
         "cx": fmt(cx), "cy": fmt(cy), "cz": fmt(cz),
         "dx0": fmt(dx0), "dx1": fmt(dx1),
@@ -519,15 +602,24 @@ def fmt(x: float) -> str:
 
 
 def generate_case(case_dir: str | Path, params: dict,
-                  compressible: bool = False) -> None:
+                  compressible: bool = False,
+                  supersonic: bool = False) -> None:
     """Copy the template into case_dir, substituting ${...} placeholders.
+
     With `compressible`, the compressible overlay is applied on top, replacing
-    0/p and the schemes and adding T, alphat and thermophysicalProperties."""
+    0/p and the schemes and adding T, alphat and thermophysicalProperties.
+    With `supersonic`, the density-based overlay goes on after that, replacing
+    the schemes again and switching the inlet/outlet to the non-reflecting
+    supersonic set."""
     case_dir = Path(case_dir)
     if case_dir.exists():
         shutil.rmtree(case_dir)
     subst = {k: v for k, v in params.items() if isinstance(v, str)}
-    roots = [TEMPLATE_DIR] + ([COMPRESSIBLE_DIR] if compressible else [])
+    roots = [TEMPLATE_DIR]
+    if compressible:
+        roots.append(COMPRESSIBLE_DIR)
+    if supersonic:
+        roots.append(SUPERSONIC_DIR)
     for root in roots:
         for src in sorted(root.rglob("*")):
             rel = src.relative_to(root)
@@ -799,9 +891,14 @@ def add_symmetry_plane(case_dir: str | Path) -> None:
         bm.read_text(), "(0 1 5 4)", "symmetry", "symmetryPlane"))
 
     # 2. 0/ fields: insert a `symmetry` entry just before the `model` patch.
-    for field in ("U", "p", "k", "omega", "nut"):
-        f = case / "0" / field
+    # Every 0/ field present, not a fixed list: a compressible case also has
+    # T and alphat, and missing one leaves that field without an entry for the
+    # new patch, which OpenFOAM rejects at startup.
+    for f in sorted((case / "0").glob("*")):
+        if not f.is_file():
+            continue
         t = f.read_text()
+        field = f.name
         marker = "    model\n    {"
         if marker not in t:
             raise RuntimeError(f"0/{field}: model patch not found")

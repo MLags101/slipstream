@@ -1,0 +1,151 @@
+"""Compressible and supersonic case generation (docs/ROADMAP_COMPRESSIBLE.md)."""
+import math
+import re
+
+import pytest
+
+from app import foamcase, post
+
+MODEL = {
+    "bbox_m": [[0.0, -0.08, -0.08], [0.30, 0.08, 0.08]],
+    "frontal_area_m2": 0.02,
+    "centroid": [0.15, 0.0, 0.0],
+}
+
+
+def cfg(**kw):
+    base = {"wind_speed": 15.0, "quality": "coarse"}
+    base.update(kw)
+    return base
+
+
+def case_files(tmp_path, **kw):
+    params = foamcase.compute_params(MODEL, cfg(**kw))
+    fm = params["flow_model"]
+    foamcase.generate_case(tmp_path / "case", params,
+                           compressible=params["compressible"],
+                           supersonic=fm == "supersonic")
+    return tmp_path / "case"
+
+
+def test_default_is_still_incompressible(tmp_path):
+    """Every run before v9 must generate byte-identical cases."""
+    case = case_files(tmp_path)
+    assert not (case / "0" / "T").exists()
+    assert not (case / "constant" / "thermophysicalProperties").exists()
+    assert "application     simpleFoam;" in (case / "system" / "controlDict").read_text()
+    # Kinematic pressure: dimensions are m2/s2, not Pa.
+    assert "[0 2 -2 0 0 0 0]" in (case / "0" / "p").read_text()
+
+
+def test_unknown_flow_model_is_rejected():
+    with pytest.raises(ValueError):
+        foamcase.flow_model({"flow_model": "hypersonic"})
+
+
+@pytest.mark.parametrize("fm,solver", [
+    ("incompressible", "simpleFoam"),
+    ("transonic", "rhoSimpleFoam"),
+    ("supersonic", "rhoCentralFoam"),
+])
+def test_flow_model_picks_its_solver(tmp_path, fm, solver):
+    case = case_files(tmp_path, flow_model=fm)
+    assert f"application     {solver};" in (case / "system" / "controlDict").read_text()
+
+
+def test_compressible_overlay_adds_thermo_and_fields(tmp_path):
+    case = case_files(tmp_path, flow_model="transonic")
+    assert (case / "0" / "T").exists()
+    assert (case / "0" / "alphat").exists()
+    thermo = (case / "constant" / "thermophysicalProperties").read_text()
+    assert "perfectGas" in thermo
+    # mu must come from the run's own nu*rho, not a Sutherland fit, so a
+    # low-speed compressible run stays comparable with the incompressible one.
+    mu = float(re.search(r"mu\s+(\S+);", thermo).group(1))
+    assert mu == pytest.approx(1.5e-5 * 1.225)
+
+
+def test_compressible_pressure_is_absolute(tmp_path):
+    p = (case_files(tmp_path, flow_model="transonic") / "0" / "p").read_text()
+    assert "[1 -1 -2 0 0 0 0]" in p           # pascals
+    assert str(int(foamcase.P_AMBIENT)) in p
+
+
+def test_force_coefficients_always_get_rhoinf(tmp_path):
+    """forceCoeffs needs rhoInf even with `rho rho;` — omitting it is a fatal
+    IO error at the first time step, not a warning."""
+    for fm in ("incompressible", "transonic"):
+        text = (case_files(tmp_path / fm, flow_model=fm)
+                / "system" / "controlDict").read_text()
+        assert "rhoInf" in text
+
+
+def test_supersonic_outlet_does_not_fix_pressure(tmp_path):
+    """A fixedValue outlet reflects shocks back into the domain."""
+    case = case_files(tmp_path, flow_model="supersonic")
+    p = (case / "0" / "p").read_text()
+    # Split on the patch entry, not the first mention of the word: the header
+    # comment talks about the outlet too.
+    outlet = p.split("    outlet\n    {", 1)[1].split("}", 1)[0]
+    assert "zeroGradient" in outlet
+    assert "fixedValue" not in outlet
+
+
+def test_supersonic_uses_shock_capturing_schemes(tmp_path):
+    schemes = (case_files(tmp_path, flow_model="supersonic")
+               / "system" / "fvSchemes").read_text()
+    assert "fluxScheme          Kurganov;" in schemes
+    assert "vanLeer" in schemes          # limited, or shocks oscillate
+    assert "steadyState" not in schemes  # transient
+
+
+def test_supersonic_time_controls_are_courant_limited(tmp_path):
+    u = 680.0
+    case = case_files(tmp_path, flow_model="supersonic", wind_speed=u)
+    text = (case / "system" / "controlDict").read_text()
+    assert "adjustTimeStep  yes;" in text
+    end = float(re.search(r"endTime\s+(\S+);", text).group(1))
+    maxco = float(re.search(r"maxCo\s+(\S+);", text).group(1))
+    assert maxco == pytest.approx(foamcase.SUPERSONIC_MAX_CO)
+    # Long enough for the flow to cross the (supersonic, tighter) domain
+    # FLOW_THROUGHS times.
+    mach = u / foamcase.speed_of_sound(foamcase.T_AMBIENT)
+    (dx0, _, _), (dx1, _, _) = foamcase.supersonic_bounds(MODEL, mach)
+    assert end == pytest.approx(foamcase.FLOW_THROUGHS * (dx1 - dx0) / u)
+
+
+def test_steady_models_still_count_iterations(tmp_path):
+    text = (case_files(tmp_path, flow_model="transonic")
+            / "system" / "controlDict").read_text()
+    assert "deltaT          1;" in text
+    assert "adjustTimeStep" not in text
+
+
+# --- pressure conversion ----------------------------------------------------
+
+def test_kinematic_pressure_is_scaled_by_density():
+    import numpy as np
+    p = np.array([10.0, -20.0])
+    assert post.to_pascals(p, 1.225, compressible=False) == pytest.approx(p * 1.225)
+
+
+def test_absolute_pressure_is_left_alone():
+    """Scaling absolute pressure again would inflate everything by rho."""
+    import numpy as np
+    p = np.array([101325.0, 101000.0])
+    assert post.to_pascals(p, 1.225, compressible=True) == pytest.approx(p)
+
+
+def test_cp_references_ambient_only_when_absolute():
+    import numpy as np
+    rho, u = 1.225, 15.0
+    q = 0.5 * rho * u * u
+    inc = post.pressure_coefficient(np.array([q]), rho, u, compressible=False)
+    com = post.pressure_coefficient(np.array([foamcase.P_AMBIENT + q]), rho, u,
+                                    compressible=True)
+    assert inc[0] == pytest.approx(1.0)
+    assert com[0] == pytest.approx(1.0)
+
+
+def test_speed_of_sound_is_right_for_air():
+    assert foamcase.speed_of_sound(288.15) == pytest.approx(340.3, abs=0.5)

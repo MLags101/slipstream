@@ -7,6 +7,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .foamcase import P_AMBIENT
+
 # --------------------------------------------------------------------------
 # .dat parsing (forceCoeffs coefficient.dat, solverInfo.dat, forces force.dat)
 # --------------------------------------------------------------------------
@@ -557,8 +559,34 @@ def _mirror_y(points: np.ndarray, tris: np.ndarray,
     return points2, tris2, fields2
 
 
+def to_pascals(p_field: np.ndarray, rho: float,
+               compressible: bool) -> np.ndarray:
+    """Absolute pressure (Pa) from whatever the solver wrote.
+
+    The incompressible solvers store kinematic pressure p/rho, so it is scaled
+    by density. The compressible ones already store pascals, and multiplying
+    again would inflate every pressure by a factor of rho.
+    """
+    return p_field if compressible else p_field * rho
+
+
+def pressure_coefficient(p_pa: np.ndarray, rho: float, u_inf: float,
+                         compressible: bool) -> np.ndarray:
+    """Cp = (p - p_ref) / (0.5 rho U^2).
+
+    Incompressible p is already gauge (referenced to the outlet at 0), so
+    p_ref is zero. Compressible p is absolute, so ambient is subtracted.
+    """
+    qdyn = 0.5 * rho * u_inf * u_inf
+    if qdyn <= 0:
+        return np.zeros_like(p_pa)
+    p_ref = P_AMBIENT if compressible else 0.0
+    return (p_pa - p_ref) / qdyn
+
+
 def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float,
-                      symmetry: bool = False) -> dict:
+                      symmetry: bool = False,
+                      compressible: bool = False) -> dict:
     """Model surface with pressure (Pa) and Cp, flat arrays for three.js."""
     path = _find_sampled(Path(case_dir), "modelSurface")
     if path is None:
@@ -566,10 +594,8 @@ def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float,
     points, tris, fields = _load_tri_mesh(path)
     if "p" not in fields:
         raise RuntimeError("field 'p' missing on sampled model surface")
-    p_kin = _clean(fields["p"]).reshape(-1)
-    p_pa = p_kin * rho
-    qdyn = 0.5 * rho * u_inf * u_inf
-    cp = p_pa / qdyn if qdyn > 0 else np.zeros_like(p_pa)
+    p_pa = to_pascals(_clean(fields["p"]).reshape(-1), rho, compressible)
+    cp = pressure_coefficient(p_pa, rho, u_inf, compressible)
     if symmetry:
         points, tris, (p_pa, cp) = _mirror_y(points, tris, [p_pa, cp])
     return {
@@ -581,7 +607,7 @@ def build_surface_viz(case_dir: str | Path, rho: float, u_inf: float,
 
 
 def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float,
-                  symmetry: bool = False) -> dict:
+                  symmetry: bool = False, compressible: bool = False) -> dict:
     """Flat-array JSON for a sampled plane carrying U and p. With `symmetry`
     the saved plane only covers +Y, so a Y-mirrored copy is appended (u_mag is
     a magnitude, so it duplicates unchanged)."""
@@ -589,7 +615,7 @@ def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float
         raise RuntimeError("fields U/p missing on sampled plane")
     u = _clean(fields["U"]).reshape(len(points), -1)
     u_mag = np.linalg.norm(u, axis=1)
-    p_pa = _clean(fields["p"]).reshape(-1) * rho
+    p_pa = to_pascals(_clean(fields["p"]).reshape(-1), rho, compressible)
     if symmetry:
         points, tris, (u_mag, p_pa) = _mirror_y(points, tris, [u_mag, p_pa])
     return {
@@ -601,14 +627,15 @@ def plane_payload(points: np.ndarray, tris: np.ndarray, fields: dict, rho: float
 
 
 def build_slice_viz(case_dir: str | Path, axis: str, rho: float,
-                    symmetry: bool = False) -> dict:
+                    symmetry: bool = False, compressible: bool = False) -> dict:
     """Center cutting plane (y or z normal) with u_mag (m/s) and p (Pa)."""
     name = "sliceY" if axis == "y" else "sliceZ"
     path = _find_sampled(Path(case_dir), name)
     if path is None:
         raise RuntimeError(f"sampled {name} not found under postProcessing/surfaces1")
     points, tris, fields = _load_tri_mesh(path)
-    return plane_payload(points, tris, fields, rho, symmetry=symmetry)
+    return plane_payload(points, tris, fields, rho, symmetry=symmetry,
+                         compressible=compressible)
 
 
 def load_legacy_polylines(path: Path) -> tuple[np.ndarray, list[list[int]], dict]:

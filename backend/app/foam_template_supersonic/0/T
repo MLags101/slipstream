@@ -1,0 +1,39 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    object      T;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+dimensions      [0 0 0 1 0 0 0];
+
+internalField   uniform ${T0};
+
+boundaryField
+{
+    inlet
+    {
+        type            fixedValue;
+        value           uniform ${T0};
+    }
+    outlet
+    {
+        type            zeroGradient;
+    }
+    walls
+    {
+        // Supersonic far field: outflow, not a wall. A slip wall reflects any
+        // shock that reaches it straight back into the solution; zeroGradient
+        // lets it leave, which is what keeps the domain small.
+        type            zeroGradient;
+    }
+    model
+    {
+        type            zeroGradient;
+    }
+}
+
+// ************************************************************************* //
