@@ -37,24 +37,31 @@ R_UNIVERSAL = 8314.462618  # J/(kmol K), OpenFOAM's units for molWeight
 # until the flow has swept the domain this many times, which is what it takes
 # for a shock structure to establish and stop moving.
 FLOW_THROUGHS = 3.0
-# Kurganov's central-upwind flux is stable well above the 0.2 the tutorials
-# use; 0.4 halves the wall clock and still resolves the shock cleanly.
+# Courant limit. Kurganov's central-upwind flux is stable well above the 0.2
+# the tutorials use, and 0.4 has run both validated cases (the Mach 2 cone and
+# the Mach 1.4 F-18) cleanly. Lowering it to 0.2 does NOT rescue a sharp-apex
+# body at high surface refinement — that failure is not Courant-driven.
 SUPERSONIC_MAX_CO = 0.4
 # Frames written per flow-through. Enough to see the shock settle without
 # filling the disk with fields nobody looks at.
 SUPERSONIC_WRITES = 4
 
 
-def _time_controls(config: dict, iterations: int, domain_len: float,
-                   u_inf: float) -> str:
+def supersonic_end_time(domain_len: float, u_inf: float) -> float:
+    """Simulated seconds for a supersonic run: long enough for the flow to
+    sweep the domain FLOW_THROUGHS times, which is what it takes for the shock
+    structure to establish and stop moving."""
+    return FLOW_THROUGHS * domain_len / max(u_inf, 1e-9)
+
+
+def _time_controls(config: dict, iterations: int, end_time: float | None) -> str:
     """The controlDict time block: iteration counting for the steady solvers,
     Courant-limited real time for the supersonic one."""
-    if flow_model(config) != "supersonic":
+    if end_time is None:
         return (f"endTime         {iterations};\n\n"
                 f"deltaT          1;\n\n"
                 f"writeControl    timeStep;\n\n"
                 f"writeInterval   {iterations};")
-    end_time = FLOW_THROUGHS * domain_len / max(u_inf, 1e-9)
     return (f"endTime         {fmt(end_time)};\n\n"
             f"deltaT          {fmt(end_time / 1e6)};\n\n"
             f"adjustTimeStep  yes;\n\n"
@@ -459,6 +466,7 @@ def compute_params(model: dict, config: dict,
             model, ground=ground, symmetry=symmetry)
 
     domain_len = dx1 - dx0
+    end_time = supersonic_end_time(domain_len, U0) if supersonic else None
     cell = domain_len / 70.0
     if ground:
         # Keep at least ~1.5 base cells between the model and the road so the
@@ -554,7 +562,7 @@ def compute_params(model: dict, config: dict,
         "k0": fmt(k0), "omega0": fmt(omega0),
         "endTime": str(q["iterations"]),
         "application": FLOW_SOLVER[flow_model(config)],
-        "timeControls": _time_controls(config, q["iterations"], domain_len, U0),
+        "timeControls": _time_controls(config, q["iterations"], end_time),
         "aref": fmt(ref_area), "lref": fmt(L),
         "cx": fmt(cx), "cy": fmt(cy), "cz": fmt(cz),
         "dx0": fmt(dx0), "dx1": fmt(dx1),
@@ -600,6 +608,9 @@ def compute_params(model: dict, config: dict,
         # What the y+ target worked out to, so the run can report it beside
         # the y+ actually achieved. None in relative mode.
         "layer_target": layer_target,
+        # Simulated seconds for a transient run; None for the steady solvers,
+        # where progress is counted in iterations instead.
+        "end_time": end_time,
         "compressible": compressible,
         "flow_model": flow_model(config),
         "mach": mach,

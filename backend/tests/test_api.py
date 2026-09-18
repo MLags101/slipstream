@@ -455,3 +455,30 @@ def test_layers_are_stored_on_the_run(monkeypatch):
     rd = main.DATA_DIR / res.json()["id"]
     cfg = _json.loads((rd / "config.json").read_text())
     assert cfg["layers"] == {"count": 6, "expansion": 1.15, "ground": True}
+
+
+# --- flow model API ---------------------------------------------------------
+
+@pytest.mark.parametrize("cfg_extra, fragment", [
+    ({"flow_model": "hypersonic"}, "flow_model must be one of"),
+    ({"flow_model": "supersonic", "wind_speed": 340}, "Mach 1.05 or more"),
+    ({"wind_speed": 680}, "for flow_model 'incompressible'"),
+    ({"flow_model": "transonic", "temperature": 5},
+     "temperature must be a number"),
+])
+def test_flow_model_validation(monkeypatch, cfg_extra, fragment):
+    monkeypatch.setattr(main.foamenv, "find_openfoam",
+                        lambda: "/opt/homebrew/bin/openfoam")
+    res = _post_run({"unit": "mm", "wind_speed": 15, "quality": "coarse",
+                     **cfg_extra})
+    assert res.status_code == 422, res.text
+    assert fragment in res.json()["detail"]
+
+
+def test_props_are_refused_with_a_compressible_model(monkeypatch):
+    monkeypatch.setattr(main.foamenv, "find_openfoam",
+                        lambda: "/opt/homebrew/bin/openfoam")
+    res = _post_run({"unit": "mm", "wind_speed": 500, "quality": "coarse",
+                     "flow_model": "transonic", "props": PROPS})
+    assert res.status_code == 422
+    assert "constant density" in res.json()["detail"]

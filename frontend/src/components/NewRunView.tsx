@@ -37,6 +37,34 @@ interface Props {
   onImportMesh: () => void;
 }
 
+// Sea-level speed of sound; matches foamcase.speed_of_sound(288.15 K).
+const SPEED_OF_SOUND = 340.3;
+
+/** What the chosen solver will and won't do at the speed being asked for. */
+function flowModelHint(
+  model: NonNullable<RunConfig["flow_model"]>,
+  mach: number,
+): string {
+  const m = Number.isFinite(mach) ? `Mach ${mach.toFixed(2)}. ` : "";
+  if (model === "incompressible")
+    return (
+      m +
+      "Density is held constant — right for almost everything, but it stops " +
+      "being true past about Mach 0.3."
+    );
+  if (model === "transonic")
+    return (
+      m +
+      "Solves density and temperature too, steadily. Runs take a few times " +
+      "longer than incompressible."
+    );
+  return (
+    m +
+    "Density-based and shock-capturing, so shocks stay sharp. Transient and " +
+    "Courant-limited: expect tens of minutes, not minutes."
+  );
+}
+
 const QUALITY_HINTS: Record<Quality, string> = {
   coarse: "~2–4 min",
   medium: "~8–15 min",
@@ -103,7 +131,12 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
   );
   const [groundLayers, setGroundLayers] = useState(false);
   const [targetYPlus, setTargetYPlus] = useState("100");
+  // v9: which solver runs. Incompressible is the default and covers almost
+  // everything; the others exist for flow fast enough that density changes.
+  const [flowModel, setFlowModel] =
+    useState<NonNullable<RunConfig["flow_model"]>>("incompressible");
   const [quality, setQuality] = useState<Quality>("medium");
+  const machNow = (parseFloat(windSpeed) || 0) / SPEED_OF_SOUND;
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -731,6 +764,23 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
       }
       refAreaCm2 = ra;
     }
+    if (flowModel === "supersonic" && ws / SPEED_OF_SOUND < 1.05) {
+      setSubmitError(
+        "Supersonic needs Mach 1.05 or more (about 357 m/s). At and just " +
+          "below Mach 1 the flow is transonic — pressure still travels " +
+          "upstream, which this solver's boundaries assume it cannot. Use " +
+          "the transonic model there.",
+      );
+      return;
+    }
+    if (flowModel === "incompressible" && ws > 200) {
+      setSubmitError(
+        "Above 200 m/s pick a compressible flow model — the incompressible " +
+          "solver ignores the density changes that dominate there.",
+      );
+      return;
+    }
+
     // Prism layers: the chosen preset, or the custom numbers. "standard" and
     // no floor layers send nothing at all, so the request matches what older
     // versions of the app sent.
@@ -791,6 +841,7 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
       ...(groundPlane ? { ground_plane: true } : {}),
       ...(symmetry ? { symmetry: true } : {}),
       ...(layers ? { layers } : {}),
+      ...(flowModel !== "incompressible" ? { flow_model: flowModel } : {}),
       ...(longWake || slipstreamOn
         ? {
             refinement: {
@@ -1070,6 +1121,29 @@ export function NewRunView({ onCreated, onImportMesh }: Props) {
               <option value="m">meters (m)</option>
               <option value="in">inches (in)</option>
             </select>
+          </label>
+          <label className="field">
+            <span className="field-label">Flow model</span>
+            <select
+              value={flowModel}
+              onChange={(e) =>
+                setFlowModel(
+                  e.target.value as NonNullable<RunConfig["flow_model"]>,
+                )
+              }
+              disabled={!file}
+            >
+              <option value="incompressible">
+                Incompressible — up to ~Mach 0.3 (110 m/s)
+              </option>
+              <option value="transonic">
+                Transonic — compressible, steady, to ~Mach 1.2
+              </option>
+              <option value="supersonic">
+                Supersonic — shock-capturing, Mach 1.05+
+              </option>
+            </select>
+            <span className="config-note">{flowModelHint(flowModel, machNow)}</span>
           </label>
           <div className="field-row">
             <label className="field">

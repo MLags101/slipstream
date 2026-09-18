@@ -29,6 +29,12 @@ DATA_DIR = Path(
 app = FastAPI(title="Slipstream backend")
 runner = Runner(DATA_DIR)
 
+# Speed ceilings per flow model. The incompressible cap is where that solver
+# stops being defensible (~Mach 0.55); the compressible one is a sanity bound,
+# not a physical limit.
+INCOMPRESSIBLE_MAX_SPEED = 200.0
+COMPRESSIBLE_MAX_SPEED = 2000.0
+
 VALID_UNITS = {"mm", "cm", "m", "in"}
 VALID_QUALITY = {"coarse", "medium", "fine"}
 
@@ -173,12 +179,40 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         raise HTTPException(422, f"unit must be one of {sorted(VALID_UNITS)}")
     if quality not in VALID_QUALITY:
         raise HTTPException(422, f"quality must be one of {sorted(VALID_QUALITY)}")
+    # The flow model decides the speed limit: the incompressible solver is only
+    # honest below about Mach 0.3, while the whole point of the compressible
+    # ones is to go past it.
+    flow_model = cfg.get("flow_model") or "incompressible"
+    if flow_model not in foamcase.FLOW_MODELS:
+        raise HTTPException(
+            422, "flow_model must be one of " + ", ".join(foamcase.FLOW_MODELS))
+    cfg["flow_model"] = flow_model
+    temperature = cfg.get("temperature")
+    if temperature is not None and not (_num(temperature) and 100 < temperature < 1000):
+        raise HTTPException(422, "temperature must be a number in (100, 1000) K")
+    speed_limit = (INCOMPRESSIBLE_MAX_SPEED if flow_model == "incompressible"
+                   else COMPRESSIBLE_MAX_SPEED)
     try:
         wind_speed = float(cfg["wind_speed"])
-        if not (0 < wind_speed < 200):
+        if not (0 < wind_speed < speed_limit):
             raise ValueError
     except (KeyError, TypeError, ValueError):
-        raise HTTPException(422, "wind_speed must be a number in (0, 200) m/s")
+        raise HTTPException(
+            422, f"wind_speed must be a number in (0, {speed_limit:g}) m/s "
+                 f"for flow_model {flow_model!r}")
+    mach = wind_speed / foamcase.speed_of_sound(
+        float(temperature or foamcase.T_AMBIENT))
+    if flow_model != "incompressible" and cfg.get("props"):
+        raise HTTPException(
+            422, "propeller disks are not supported with a compressible flow "
+                 "model: the actuator disk adds momentum calibrated for "
+                 "constant density, which is exactly what these solvers drop")
+    if flow_model == "supersonic" and mach < 1.05:
+        raise HTTPException(
+            422, f"supersonic needs Mach 1.05 or more (this is Mach {mach:.2f}). "
+                 "At and just below Mach 1 the flow is transonic: information "
+                 "still travels upstream, so the non-reflecting boundaries this "
+                 "solver uses are invalid. Use transonic instead.")
     # Set only by re-solve and mesh import, never by an STL upload.
     for internal in ("mesh_from", "mesh_import", "resolve_base_name"):
         cfg.pop(internal, None)
@@ -237,17 +271,6 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
             cfg["refinement"] = refinement
         else:
             cfg.pop("refinement")
-
-    # v9 (in progress): the compressible case templates exist and generate a
-    # runnable rhoSimpleFoam case, but the runner still launches simpleFoam for
-    # every run, so accepting this would silently solve a compressible case
-    # with the incompressible solver. Rejected until runner.py selects the
-    # solver — see docs/ROADMAP_COMPRESSIBLE.md, Phase 1.4.
-    if cfg.get("flow_model") not in (None, "incompressible"):
-        raise HTTPException(
-            501, "compressible flow is not wired up yet: the case templates "
-                 "exist but the solver is still simpleFoam. See "
-                 "docs/ROADMAP_COMPRESSIBLE.md")
 
     layers = cfg.get("layers")
     if layers is not None:

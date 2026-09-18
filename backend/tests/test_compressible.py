@@ -218,3 +218,24 @@ def test_shock_compression_range_is_sane():
     from app import ondemand
     lo, hi = ondemand.SHOCK_COMPRESSION_RANGE
     assert 0 < lo < ondemand.SHOCK_COMPRESSION < hi
+
+
+# --- failure messages -------------------------------------------------------
+
+def test_thermo_divergence_gets_an_actionable_message(tmp_path):
+    """A raw MPI stack trace tells the user nothing. This failure has a known
+    cause (sharp tip + fine surface mesh) and a known workaround."""
+    from app.runner import explain_foam_failure
+    log = tmp_path / "log.rhoCentralFoam"
+    log.write_text("Time = 0.001\n--> FOAM FATAL ERROR:\n"
+                   "Negative initial temperature T0: -3.15\n")
+    msg = explain_foam_failure(log)
+    assert msg and "coarser mesh quality" in msg
+
+
+def test_unknown_failures_fall_through(tmp_path):
+    from app.runner import explain_foam_failure
+    log = tmp_path / "log.simpleFoam"
+    log.write_text("some unrelated error\n")
+    assert explain_foam_failure(log) is None
+    assert explain_foam_failure(tmp_path / "missing.log") is None

@@ -29,6 +29,49 @@ import signal
 TERMINAL = ("done", "error", "cancelled")
 
 
+def fmt_time(seconds: float) -> str:
+    """Simulated time for a progress message. Supersonic runs cover
+    milliseconds of real flow, so seconds alone would read as 0.00."""
+    if seconds >= 1.0:
+        return f"{seconds:.3g} s"
+    if seconds >= 1e-3:
+        return f"{seconds * 1e3:.3g} ms"
+    return f"{seconds * 1e6:.3g} \u00b5s"
+
+
+# OpenFOAM failures that mean something specific, translated into what the
+# user can actually do about them. Without this the run reports an MPI stack
+# trace, which says nothing.
+_KNOWN_FAILURES = (
+    (
+        "Negative initial temperature",
+        "The supersonic solve went unstable and the temperature fell below "
+        "absolute zero in one cell. This is a startup transient, not a bad "
+        "model: it shows up on sharply pointed noses once the surface mesh is "
+        "fine enough to resolve the tip. Measured on a 15\u00b0 cone at Mach 2, "
+        "which runs cleanly at one refinement level lower. Try a coarser "
+        "mesh quality, or round the very tip of the model.",
+    ),
+    (
+        "Maximum number of iterations exceeded",
+        "The thermodynamics failed to converge, which usually follows the "
+        "solution going unstable earlier. Try a coarser mesh quality.",
+    ),
+)
+
+
+def explain_foam_failure(log_path: Path) -> str | None:
+    """A specific, actionable message for a known OpenFOAM failure, or None."""
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError:
+        return None
+    for needle, message in _KNOWN_FAILURES:
+        if needle in text:
+            return message
+    return None
+
+
 class _Cancelled(Exception):
     """Raised inside the pipeline when the user cancels a run."""
 
@@ -211,6 +254,9 @@ class Runner:
             self._proc = None
         if check and proc.returncode != 0:
             tail = self._log_tail(log_path, 30)
+            explained = explain_foam_failure(log_path)
+            if explained:
+                raise RuntimeError(explained)
             raise RuntimeError(f"{cmd.split()[0]} failed (exit {proc.returncode}). "
                                f"Log tail:\n{tail}")
         return proc.returncode
@@ -447,7 +493,12 @@ class Runner:
         compressible = params.pop("compressible")
         flow_model = params.pop("flow_model")
         mach = params.pop("mach")
+        end_time = params.pop("end_time")
         solver = foamcase.FLOW_SOLVER[flow_model]
+        # A transient solve advances seconds, not iterations: progress is the
+        # fraction of simulated time reached, and there is no "converged"
+        # state to stop early on — it runs until the shock structure settles.
+        transient = end_time is not None
 
         self.update(run_id, model=model, progress=0.06,
                     refinement=refinement_info if config.get("refinement") else None,
@@ -513,8 +564,9 @@ class Runner:
         self._foam(case, "decomposePar -force", "log.decomposePar", run_id)
 
         n = foamcase.NPROCS
-        self.update(run_id, message=f"Running {solver} on {n} cores "
-                                    f"(0/{iterations} iterations)")
+        budget = (f"0/{fmt_time(end_time)}" if transient
+                  else f"0/{iterations} iterations")
+        self.update(run_id, message=f"Running {solver} on {n} cores ({budget})")
 
         u0 = float(config["wind_speed"])
         stop = {"requested": False}
@@ -547,12 +599,21 @@ class Runner:
                         "exported as overlapping shells. Repair the STL into a "
                         "single watertight solid (or delete interior parts) and "
                         "re-run.")
-                frac = min(1.0, it / iterations)
-                suffix = " - converged, stopping early" if stop["requested"] else ""
-                self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),
-                            message=f"Running {solver} on {n} cores "
+                if transient:
+                    now = float(hist["iters"][-1])
+                    frac = min(1.0, now / end_time)
+                    progress_msg = (f"Running {solver} on {n} cores "
+                                    f"({fmt_time(now)}/{fmt_time(end_time)})")
+                else:
+                    frac = min(1.0, it / iterations)
+                    suffix = (" - converged, stopping early"
+                              if stop["requested"] else "")
+                    progress_msg = (f"Running {solver} on {n} cores "
                                     f"({it}/{iterations} iterations){suffix}")
-                if not stop["requested"] and self._converged(hist["cd"], it, iterations):
+                self.update(run_id, progress=max(0.36, 0.35 + 0.55 * frac),
+                            message=progress_msg)
+                if (not transient and not stop["requested"]
+                        and self._converged(hist["cd"], it, iterations)):
                     stop["requested"] = self._request_stop(case)
                     if stop["requested"]:
                         self.update(run_id, stopped_early=True)
