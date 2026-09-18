@@ -978,7 +978,7 @@ export function ResultViewer({ runId, config, model, props }: Props) {
                   className={`seg${shockPct === v ? " seg-active" : ""}`}
                   onClick={() => setShockPct(v)}
                 >
-                  {v === 6 ? "weak" : v === 12 ? "std" : "strong"}
+                  {v === 6 ? "weak" : v === 12 ? "standard" : "strong"}
                 </button>
               ))}
             </div>
