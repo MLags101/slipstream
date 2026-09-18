@@ -49,8 +49,7 @@ functions
         log             no;
 
         patches         (model);
-        rho             rhoInf;
-        rhoInf          ${rho};
+${forceRho}
         magUInf         ${U0};
         lRef            ${lref};
         Aref            ${aref};
@@ -69,8 +68,7 @@ functions
         log             no;
 
         patches         (model);
-        rho             rhoInf;
-        rhoInf          ${rho};
+${forceRho}
         CofR            (${cx} ${cy} ${cz});
     }
 

@@ -1,0 +1,38 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       volScalarField;
+    object      p;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Absolute pressure in pascals, not the kinematic p/rho the incompressible
+// solver uses. post.build_surface_viz keys off this via the run's flow model.
+dimensions      [1 -1 -2 0 0 0 0];
+
+internalField   uniform ${pAmb};
+
+boundaryField
+{
+    inlet
+    {
+        type            zeroGradient;
+    }
+    outlet
+    {
+        type            fixedValue;
+        value           uniform ${pAmb};
+    }
+    walls
+    {
+        type            slip;
+    }
+    model
+    {
+        type            zeroGradient;
+    }
+}
+
+// ************************************************************************* //

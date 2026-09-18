@@ -1,0 +1,45 @@
+/*--------------------------------*- C++ -*----------------------------------*/
+FoamFile
+{
+    version     2.0;
+    format      ascii;
+    class       dictionary;
+    object      thermophysicalProperties;
+}
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+// Perfect gas with constant Cp and a constant viscosity. `const` transport
+// rather than sutherland on purpose: mu is set to nu*rho from the run's own
+// config, so a low-speed compressible run is directly comparable with the
+// incompressible one. Sutherland would make viscosity a function of T and
+// quietly break that comparison.
+thermoType
+{
+    type            hePsiThermo;
+    mixture         pureMixture;
+    transport       const;
+    thermo          hConst;
+    equationOfState perfectGas;
+    specie          specie;
+    energy          sensibleEnthalpy;
+}
+
+mixture
+{
+    specie
+    {
+        molWeight   ${molWeight};
+    }
+    thermodynamics
+    {
+        Cp          ${Cp};
+        Hf          0;
+    }
+    transport
+    {
+        mu          ${mu};
+        Pr          ${Pr};
+    }
+}
+
+// ************************************************************************* //

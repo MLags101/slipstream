@@ -238,6 +238,17 @@ async def create_run(stl: UploadFile, config: str = Form(...)):
         else:
             cfg.pop("refinement")
 
+    # v9 (in progress): the compressible case templates exist and generate a
+    # runnable rhoSimpleFoam case, but the runner still launches simpleFoam for
+    # every run, so accepting this would silently solve a compressible case
+    # with the incompressible solver. Rejected until runner.py selects the
+    # solver — see docs/ROADMAP_COMPRESSIBLE.md, Phase 1.4.
+    if cfg.get("flow_model") not in (None, "incompressible"):
+        raise HTTPException(
+            501, "compressible flow is not wired up yet: the case templates "
+                 "exist but the solver is still simpleFoam. See "
+                 "docs/ROADMAP_COMPRESSIBLE.md")
+
     layers = cfg.get("layers")
     if layers is not None:
         allowed = set(foamcase.LAYER_LIMITS) | {"ground"}

@@ -8,6 +8,44 @@ from pathlib import Path
 from string import Template
 
 TEMPLATE_DIR = Path(__file__).parent / "foam_template"
+# Overlaid on top of the base template for compressible runs: absolute-pressure
+# 0/p, the T and alphat fields, thermophysical properties and compressible
+# schemes. Files here replace their base counterparts.
+COMPRESSIBLE_DIR = Path(__file__).parent / "foam_template_compressible"
+
+# What solves each flow model, and how compressible it is.
+FLOW_MODELS = ("incompressible", "transonic", "supersonic")
+FLOW_SOLVER = {
+    "incompressible": "simpleFoam",
+    "transonic": "rhoSimpleFoam",
+    "supersonic": "rhoCentralFoam",
+}
+
+# Air, for the compressible thermophysical model.
+MOL_WEIGHT = 28.96
+CP_AIR = 1005.0
+PRANDTL = 0.71
+P_AMBIENT = 101325.0
+T_AMBIENT = 288.15
+R_UNIVERSAL = 8314.462618  # J/(kmol K), OpenFOAM's units for molWeight
+
+
+def flow_model(config: dict) -> str:
+    """The run's flow model, defaulting to the incompressible solver every run
+    before v9 used."""
+    fm = config.get("flow_model") or "incompressible"
+    if fm not in FLOW_MODELS:
+        raise ValueError(f"unknown flow_model {fm!r}")
+    return fm
+
+
+def is_compressible(config: dict) -> bool:
+    return flow_model(config) != "incompressible"
+
+
+def speed_of_sound(temperature_k: float, gamma: float = 1.4) -> float:
+    """Ideal-gas speed of sound (m/s) for air at `temperature_k`."""
+    return math.sqrt(gamma * (R_UNIVERSAL / MOL_WEIGHT) * temperature_k)
 
 QUALITY = {
     "coarse": {"surf_min": 4, "surf_max": 5, "iterations": 250, "max_global_cells": 2_000_000},
@@ -318,6 +356,10 @@ def compute_params(model: dict, config: dict,
     nu = float(config.get("nu") or 1.5e-5)
     q = QUALITY[config["quality"]]
 
+    compressible = is_compressible(config)
+    T0 = float(config.get("temperature") or T_AMBIENT)
+    mach = U0 / speed_of_sound(T0)
+
     ground = bool(config.get("ground_plane"))
     symmetry = bool(config.get("symmetry"))
     (dx0, dy0, dz0), (dx1, dy1, dz1) = domain_bounds(
@@ -430,6 +472,23 @@ def compute_params(model: dict, config: dict,
         "featLevel": str(q["surf_min"]),
         "maxGlobalCells": str(q["max_global_cells"]),
         "nprocs": str(NPROCS),
+        # Compressible plumbing. In the incompressible case these are unused
+        # template keys, which Template.substitute simply ignores.
+        # Compressible runs integrate forces with the solved density field,
+        # but forceCoeffs still needs rhoInf as the reference density for the
+        # coefficients themselves — omitting it is a fatal IO error.
+        "forceRho": (f"        rho             "
+                     f"{'rho' if compressible else 'rhoInf'};\n"
+                     f"        rhoInf          {fmt(rho)};"),
+        "T0": fmt(T0),
+        "pAmb": fmt(P_AMBIENT),
+        "molWeight": fmt(MOL_WEIGHT),
+        "Cp": fmt(CP_AIR),
+        "Pr": fmt(PRANDTL),
+        # Constant viscosity taken from the run's own nu, so a low-speed
+        # compressible run is comparable with the incompressible one.
+        "mu": fmt(nu * rho),
+        "transonic": "yes" if mach > 0.7 else "no",
         "doLayers": "true" if lay["count"] > 0 else "false",
         "layerEntries": layer_entries(layer_counts),
         "layerThickness": layer_thickness,
@@ -441,6 +500,9 @@ def compute_params(model: dict, config: dict,
         # What the y+ target worked out to, so the run can report it beside
         # the y+ actually achieved. None in relative mode.
         "layer_target": layer_target,
+        "compressible": compressible,
+        "flow_model": flow_model(config),
+        "mach": mach,
         "refinement_info": {
             "long_wake": ({"level2_end_m": rbx1,
                            "level1_end_m": boxes[0][2][0] if boxes else rbx1}
@@ -456,21 +518,26 @@ def fmt(x: float) -> str:
     return f"{x:.8g}"
 
 
-def generate_case(case_dir: str | Path, params: dict) -> None:
-    """Copy the template into case_dir, substituting ${...} placeholders."""
+def generate_case(case_dir: str | Path, params: dict,
+                  compressible: bool = False) -> None:
+    """Copy the template into case_dir, substituting ${...} placeholders.
+    With `compressible`, the compressible overlay is applied on top, replacing
+    0/p and the schemes and adding T, alphat and thermophysicalProperties."""
     case_dir = Path(case_dir)
     if case_dir.exists():
         shutil.rmtree(case_dir)
     subst = {k: v for k, v in params.items() if isinstance(v, str)}
-    for src in sorted(TEMPLATE_DIR.rglob("*")):
-        rel = src.relative_to(TEMPLATE_DIR)
-        dst = case_dir / rel
-        if src.is_dir():
-            dst.mkdir(parents=True, exist_ok=True)
-        else:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            text = src.read_text()
-            dst.write_text(Template(text).substitute(subst))
+    roots = [TEMPLATE_DIR] + ([COMPRESSIBLE_DIR] if compressible else [])
+    for root in roots:
+        for src in sorted(root.rglob("*")):
+            rel = src.relative_to(root)
+            dst = case_dir / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+            else:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                text = src.read_text()
+                dst.write_text(Template(text).substitute(subst))
 
 
 def set_add_layers(case_dir: str | Path, enabled: bool) -> None:

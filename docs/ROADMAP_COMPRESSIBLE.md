@@ -128,6 +128,28 @@ This is the part that breaks silently if rushed.
 incompressible run's `cd` to within 2%. If it does not, the pressure conversion is wrong.
 This is the single most valuable test in the phase — write it first.
 
+**Measured** (0.30 x 0.16 x 0.10 m box, 15 m/s = Mach 0.044, same mesh for both):
+
+| Solver | Cd | Iterations |
+| --- | --- | --- |
+| `simpleFoam` | 0.8695 | 250 (converged) |
+| `rhoSimpleFoam` | 0.8906 +/- 0.0011 | 2000 (converged) |
+
+A +2.4% difference — just outside the bar, but converged and stable, so it is a
+discretization difference, not a units bug. The diagnostic that matters: getting the
+absolute/kinematic pressure conversion wrong would show up as a factor of rho (+22.5%),
+not +2.4%. Worth closing the last 0.4% by matching the energy/momentum schemes more
+carefully before Phase 1 ships, but it is not a blocker for Phase 2.
+
+**Two traps this run hit, both already fixed in the templates:**
+
+1. `forceCoeffs` still requires `rhoInf` even with `rho rho;` — omitting it is a fatal IO
+   error, not a warning.
+2. Compressible SIMPLE needs far more relaxation than the incompressible solver. With
+   `rho 1.0` the temperature went negative in 7 iterations ("Negative initial temperature
+   T0"). The templates now use the tutorial values (`rho 0.05`, `U 0.3`, `h 0.3`), which
+   costs roughly 8x the iterations — 2000 against 250 for the same body.
+
 ### 1.4 Solver selection
 
 In `runner.py` `_execute`, choose the binary from `flow_model`:
