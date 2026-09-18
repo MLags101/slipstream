@@ -205,3 +205,42 @@ the model.
 
 The practical rule: **y+ targeting works on surfaces the mesh actually refines.** For the
 ground plane, refine the surface first or accept the y+ it reports.
+
+## Supersonic shock angles
+
+Shock position is set by inviscid physics — geometry and Mach number — which RANS predicts
+well. This is a different accuracy class from the drag cases above, which depend on
+boundary layers and separation.
+
+| Case | Measured | Exact | Error | Mesh |
+| --- | --- | --- | --- | --- |
+| 15° wedge, Mach 5 | 24.54° | 24.32° | **+0.9%** | OpenFOAM's `wedge15Ma5` tutorial, 4.8k cells, 2D |
+| 15° cone, Mach 2 | 32.72° | 33.91° | **−3.5%** | Slipstream-generated, 682k cells, 3D half-model |
+
+The exact values are closed-form, not digitized from a chart: the wedge from the
+theta-beta-Mach relation, the cone from integrating Taylor-Maccoll
+(`examples/validation/supersonic.py`). The cone figure matches the textbook 33.9° for this
+case.
+
+**The measurement has its own uncertainty, and it is not small.** The shock is located as
+the outermost radius where density has risen a threshold above freestream, and on this mesh
+the shock is smeared over several cells, so the answer depends on that threshold:
+
+| Compression threshold | Measured angle |
+| --- | --- |
+| 5% | 32.72° |
+| 10% | 31.63° |
+| 15% | 30.81° |
+
+Lower thresholds sit further out and read closer to exact, which is what a smeared shock
+does. So "−3.5%" is the best case of a ±2° band, and a finer mesh would narrow it. Quote
+the band, not just the best number.
+
+Two traps worth recording, both of which produced confidently wrong answers first:
+
+1. **The largest density gradient is not the shock.** A base expansion behind the cone drops
+   density far harder than the shock raises it, so taking `argmax(|drho/dy|)` locks onto the
+   wake and reports 0.44° instead of 33°. The shock is the *outermost* compression.
+2. **Measure alongside the body, not downstream of it.** Fitting over x well past the cone
+   base gave 29.6° with a 20 mm residual, because the shock weakens and curves back there.
+   Restricted to the cone's own span the residual falls to 4.4 mm.

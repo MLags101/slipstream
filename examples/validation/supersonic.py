@@ -128,15 +128,24 @@ def cone_shock_angle(mach: float, half_angle_deg: float,
 def measure_shock_angle(centers: np.ndarray, rho: np.ndarray,
                         apex: tuple[float, float] = (0.0, 0.0),
                         x_frac: tuple[float, float] = (0.35, 0.9),
-                        n_stations: int = 25) -> dict:
-    """Shock angle (deg) from a density field, by finding the density-gradient
-    ridge at a series of x stations and fitting a line through the apex.
+                        n_stations: int = 25,
+                        compression: float = 0.15) -> dict:
+    """Shock angle (deg) from a density field, by locating the shock at a
+    series of x stations and fitting a line through the apex.
 
     `centers` is (N, 3) cell centers, `rho` the matching density. Only the
     downstream part of the domain is used, where the shock is established and
     away from the outlet.
+
+    The shock is found as the outermost radius where density has risen
+    `compression` above freestream — not as the largest density gradient. A
+    base expansion behind the body produces a much steeper gradient than the
+    shock does, and an argmax finds that instead, reporting an angle near zero.
     """
     x, y = centers[:, 0], centers[:, 1]
+    # Freestream density: the outer tenth of the domain, which the shock has
+    # not reached at the stations being measured.
+    rho_inf = float(np.median(rho[y > y.min() + 0.9 * (y.max() - y.min())]))
     x0 = apex[0] + x_frac[0] * (x.max() - apex[0])
     x1 = apex[0] + x_frac[1] * (x.max() - apex[0])
     stations = np.linspace(x0, x1, n_stations)
@@ -148,12 +157,31 @@ def measure_shock_angle(centers: np.ndarray, rho: np.ndarray,
         if m.sum() < 8:
             continue
         yy, rr = y[m], rho[m]
-        order = np.argsort(yy)
-        yy, rr = yy[order], rr[order]
-        grad = np.abs(np.gradient(rr, yy))
-        j = int(np.argmax(grad))
+        # A slab cut from a 3D mesh holds many cells at the same y (different
+        # z), so the raw samples are not a function of y: np.gradient would
+        # divide by a zero spacing. Bin in y and average instead, which also
+        # smooths the mesh noise the gradient would otherwise amplify.
+        nbins = max(12, min(80, int(m.sum() ** 0.5)))
+        edges = np.linspace(yy.min(), yy.max(), nbins + 1)
+        idx = np.clip(np.digitize(yy, edges) - 1, 0, nbins - 1)
+        counts = np.bincount(idx, minlength=nbins)
+        sums = np.bincount(idx, weights=rr, minlength=nbins)
+        keep = counts > 0
+        if keep.sum() < 5:
+            continue
+        centers_y = (0.5 * (edges[:-1] + edges[1:]))[keep]
+        mean_rho = (sums[keep] / counts[keep])
+        # The shock is the OUTERMOST compression, not the strongest gradient.
+        # A base expansion behind a blunt tail drops density far harder than
+        # the shock raises it, so an argmax over |drho/dy| locks onto the wake
+        # and reports a near-zero angle. Walk in from the freestream instead
+        # and take the first crossing above the compression threshold.
+        hit = np.nonzero(mean_rho > rho_inf * (1.0 + compression))[0]
+        if hit.size == 0:
+            continue
+        j = int(hit[-1])  # bins are ordered by increasing y
         xs.append(xc)
-        ys.append(yy[j])
+        ys.append(centers_y[j])
     if len(xs) < 5:
         raise RuntimeError("not enough stations resolved a shock")
     xs, ys = np.array(xs), np.array(ys)
