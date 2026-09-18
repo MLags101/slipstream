@@ -69,6 +69,43 @@ POINTS
 """
 
 
+# A shock is a near-discontinuous jump in density, so an isosurface of rho a
+# little above freestream traces the shock front through the volume. Cheaper
+# and far more robust than isosurfacing |grad(rho)|, whose value depends on the
+# local mesh spacing and so breaks up across refinement boundaries.
+_SHOCK_FO = """type            surfaces;
+libs            (sampling);
+writeControl    writeTime;
+surfaceFormat   vtk;
+formatOptions
+{
+    vtk
+    {
+        legacy      true;
+        format      ascii;
+    }
+}
+fields          (U rho);
+interpolationScheme cellPoint;
+surfaces
+{
+    onDemandShock
+    {
+        type        isoSurface;
+        isoField    rho;
+        isoValue    ISOVALUE;
+        interpolate true;
+    }
+}
+"""
+
+# Density rise above freestream that counts as the shock front. Low enough to
+# catch the weak waves off a canopy or a wing, high enough to sit clear of
+# numerical noise in the far field.
+SHOCK_COMPRESSION = 0.12
+SHOCK_COMPRESSION_RANGE = (0.02, 1.0)
+
+
 def _run_postprocess(case: Path, func: str) -> None:
     cmd = (f'cd "{case}" && postProcess -func {func} -latestTime '
            f"> log.postProcess.{func} 2>&1")
@@ -129,6 +166,61 @@ def slice_json(run_dir: Path, axis: str, pos: float, rho: float,
                           ignore_errors=True)
         cache.write_text(json.dumps(payload))
         return payload
+
+
+def shock_json(run_dir: Path, rho_inf: float, compression: float,
+               symmetry: bool = False) -> dict:
+    """Isosurface of density at `rho_inf * (1 + compression)`: the shock front.
+
+    Only meaningful for a compressible run — the incompressible solvers do not
+    write a rho field at all, so callers must gate on the flow model.
+    """
+    key = f"{compression:.4g}".replace(".", "p")
+    cache = run_dir / f"viz_shock_{key}.json"
+    if (payload := _cached(cache)) is not None:
+        return payload
+    with _LOCK:
+        if (payload := _cached(cache)) is not None:
+            return payload
+        case = run_dir / "case"
+        if not case.exists():
+            raise RuntimeError("case data unavailable (run compacted)")
+        iso = rho_inf * (1.0 + compression)
+        (case / "system" / "onDemandShock").write_text(
+            _SHOCK_FO.replace("ISOVALUE", f"{iso:.8g}"))
+        _run_postprocess(case, "onDemandShock")
+        vtk = _latest_vtk(case, "onDemandShock")
+        if vtk is None:
+            raise RuntimeError(
+                "no shock surface found: the flow may be too weak to raise "
+                f"density {compression * 100:.0f}% above freestream. See "
+                "case/log.postProcess.onDemandShock")
+        try:
+            points, tris, fields = post._load_tri_mesh(vtk)
+            payload = shock_payload(points, tris, fields, symmetry=symmetry)
+        finally:
+            import shutil
+            shutil.rmtree(case / "postProcessing" / "onDemandShock",
+                          ignore_errors=True)
+        cache.write_text(json.dumps(payload))
+        return payload
+
+
+def shock_payload(points: np.ndarray, tris: np.ndarray, fields: dict,
+                  symmetry: bool = False) -> dict:
+    """Flat arrays for the shock isosurface, colored by local flow speed."""
+    u = post._clean(fields["U"]).reshape(len(points), -1) if "U" in fields else None
+    u_mag = (np.linalg.norm(u, axis=1) if u is not None
+             else np.zeros(len(points)))
+    if symmetry:
+        points, tris, (u_mag,) = post._mirror_y(points, tris, [u_mag])
+    return {
+        "positions": [round(float(x), 5) for x in points.ravel()],
+        "indices": [int(i) for i in tris.ravel()],
+        "fields": {"u_mag": post._tolist(u_mag)},
+        "ranges": {"u_mag": post._rng(u_mag)},
+        "triangles": int(len(tris)),
+    }
 
 
 STREAM_DENSITY = {"low": 5, "med": 7, "high": 10}   # n -> n*n seed grid

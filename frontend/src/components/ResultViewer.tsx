@@ -12,6 +12,7 @@ import {
   type StreamRegion,
   type VizSlice,
   type VizStreamlines,
+  type VizShock,
   type VizSurface,
 } from "../api";
 import { createViewer, buildSceneHelpers, type Viewer } from "../viewer/scene";
@@ -21,13 +22,15 @@ import {
   divergingBWR,
   viridis,
   fieldToVertexColors,
+  sampleStops,
+  type RGB,
   symmetricNorm,
   linearNorm,
 } from "../lib/colormaps";
 import { Colorbar } from "./Colorbar";
 import { downloadDataUrl } from "../lib/download";
 
-type Mode = "geometry" | "surface" | "slice" | "streamlines";
+type Mode = "geometry" | "surface" | "slice" | "streamlines" | "shock";
 
 interface Props {
   runId: string;
@@ -116,6 +119,70 @@ function streamlinesToSegments(viz: VizStreamlines): THREE.BufferGeometry {
   g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(segCol), 3));
   g.setAttribute("lineDistance", new THREE.BufferAttribute(new Float32Array(segDist), 1));
   return g;
+}
+
+/**
+ * Cool ramp for the shock shell: deep blue through cyan to near-white.
+ *
+ * Flow speed varies little across a density isosurface, so a full-spectrum
+ * map like viridis pushes almost the whole surface to one end and reads as a
+ * flat wash of colour. A single-hue ramp keeps the brightness variation doing
+ * the work and matches the rest of the viewer.
+ */
+function shockRamp(t: number): RGB {
+  return sampleStops(
+    [
+      [0.10, 0.20, 0.42],
+      [0.18, 0.55, 0.82],
+      [0.22, 0.82, 1.0],
+      [0.88, 0.97, 1.0],
+    ],
+    t,
+  );
+}
+
+/**
+ * Shock isosurface material.
+ *
+ * A shock is a thin sheet, and shading it like a solid turns the whole
+ * envelope into an opaque blob that hides both the aircraft and the wave
+ * structure. This shades by viewing angle instead: bright where the sheet is
+ * seen edge-on (the silhouette of each cone), nearly clear face-on. Additive
+ * blending then makes overlapping sheets accumulate, so a shock crossing
+ * another reads as a brighter line rather than flat grey.
+ */
+function shockShellMaterial(): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    uniforms: { uEdge: { value: 2.0 }, uGain: { value: 1.25 } },
+    vertexShader: `
+      attribute vec3 shockColor;
+      varying vec3 vCol;
+      varying vec3 vN;
+      varying vec3 vView;
+      void main() {
+        vCol = shockColor;
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform float uEdge;
+      uniform float uGain;
+      varying vec3 vCol;
+      varying vec3 vN;
+      varying vec3 vView;
+      void main() {
+        float facing = abs(dot(normalize(vN), normalize(vView)));
+        float rim = pow(clamp(1.0 - facing, 0.0, 1.0), uEdge);
+        float a = clamp(rim * uGain, 0.0, 1.0);
+        gl_FragColor = vec4(vCol * a, a);
+      }`,
+  });
 }
 
 /**
@@ -273,9 +340,10 @@ export function ResultViewer({ runId, config, model, props }: Props) {
     stl?: THREE.BufferGeometry;
     surface?: VizSurface;
     streamlines: Record<string, VizStreamlines>;
+    shocks: Record<string, VizShock>;
     slices: Record<string, VizSlice>;
     sweeps: Partial<Record<SliceAxis, SweepFrames>>;
-  }>({ slices: {}, sweeps: {}, streamlines: {} });
+  }>({ slices: {}, sweeps: {}, streamlines: {}, shocks: {} });
 
   const sliceKey = `${sliceAxis}@${slicePos ?? "center"}`;
 
@@ -283,6 +351,12 @@ export function ResultViewer({ runId, config, model, props }: Props) {
   const [streamDensity, setStreamDensity] = useState<StreamDensity>("med");
   const [streamRegion, setStreamRegion] = useState<StreamRegion>("full");
   const streamKey = `${streamDensity}/${streamRegion}`;
+  // Shock isosurface: density rise above freestream that marks the front.
+  // Lower catches the weak canopy and wing waves; higher isolates the bow shock.
+  const [shockPct, setShockPct] = useState(12);
+  const shockKey = `${shockPct}`;
+  const compressible =
+    (config.flow_model ?? "incompressible") !== "incompressible";
   // Dashes travelling along the streamlines. Off by default: solid lines read
   // better for a still, and the motion is a deliberate choice, not the norm.
   const [flowAnim, setFlowAnim] = useState(false);
@@ -472,6 +546,39 @@ export function ResultViewer({ runId, config, model, props }: Props) {
           if (showProps && hasProps) group.add(propDisks(props!));
           frameOnce(viewer, mesh);
           viewer.setContent(group);
+        } else if (mode === "shock") {
+          const [shock, surface] = await Promise.all([
+            cache.shocks[shockKey]
+              ? Promise.resolve(cache.shocks[shockKey])
+              : api.getVizShock(runId, shockPct / 100),
+            getSurface(),
+          ]);
+          cache.shocks[shockKey] = shock;
+          if (cancelled) return;
+          const group = new THREE.Group();
+          const body = grayContext(surface, true);
+          // Translucent and double-sided: the shock is a thin sheet wrapping
+          // the aircraft, so both faces have to draw or it reads as holes.
+          const shockGeo = vizToGeometry(shock.positions, shock.indices);
+          shockGeo.setAttribute(
+            "shockColor",
+            new THREE.BufferAttribute(
+              fieldToVertexColors(
+                shock.fields.u_mag,
+                shockRamp,
+                linearNorm(shock.ranges.u_mag[0], shock.ranges.u_mag[1]),
+              ),
+              3,
+            ),
+          );
+          const shockMesh = new THREE.Mesh(shockGeo, shockShellMaterial());
+          group.add(body);
+          group.add(shockMesh);
+          if (showProps && hasProps) group.add(propDisks(props!));
+          // Frame the shock, not the body: the cone extends several body
+          // lengths downstream, and framing the aircraft crops it.
+          frameOnce(viewer, shockMesh);
+          viewer.setContent(group);
         } else if (mode === "streamlines") {
           const [lines, surface] = await Promise.all([
             cache.streamlines[streamKey]
@@ -569,7 +676,7 @@ export function ResultViewer({ runId, config, model, props }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, config.roll_deg, streamKey, sweeping, showProps, props, flowAnim]);
+  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, config.roll_deg, streamKey, shockKey, sweeping, showProps, props, flowAnim]);
 
   /**
    * Stop the sweep: cancel any in-flight sampling and drop back to the
@@ -772,6 +879,11 @@ export function ResultViewer({ runId, config, model, props }: Props) {
               ["surface", "Surface pressure"],
               ["slice", "Flow slice"],
               ["streamlines", "Streamlines"],
+              // Shocks need a density field, which only the compressible
+              // solvers write. Hidden entirely on an incompressible run.
+              ...(compressible
+                ? ([["shock", "Shock waves"]] as [Mode, string][])
+                : []),
             ] as [Mode, string][]
           ).map(([m, label]) => (
             <button
@@ -855,6 +967,24 @@ export function ResultViewer({ runId, config, model, props }: Props) {
                 ■ Stop
               </button>
             </div>
+          </>
+        )}
+        {mode === "shock" && (
+          <>
+            <div className="segmented" title="density rise above freestream that marks the shock front">
+              {[6, 12, 25].map((v) => (
+                <button
+                  key={v}
+                  className={`seg${shockPct === v ? " seg-active" : ""}`}
+                  onClick={() => setShockPct(v)}
+                >
+                  {v === 6 ? "weak" : v === 12 ? "std" : "strong"}
+                </button>
+              ))}
+            </div>
+            <span className="config-note viewer-note">
+              isosurface at +{shockPct}% density
+            </span>
           </>
         )}
         {mode === "streamlines" && (

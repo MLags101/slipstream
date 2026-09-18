@@ -83,6 +83,14 @@ export interface RunConfig {
    * valid range. Omit for the defaults (3 layers, ratio 1.2).
    */
   layers?: LayerOptions;
+  /**
+   * v9: which solver runs. "incompressible" (the default) is simpleFoam;
+   * "transonic" is rhoSimpleFoam; "supersonic" is the density-based,
+   * shock-capturing rhoCentralFoam.
+   */
+  flow_model?: "incompressible" | "transonic" | "supersonic";
+  /** v9: freestream static temperature (K); compressible runs only. */
+  temperature?: number;
   /** v8.4: the run solves on an imported mesh instead of meshing an STL. */
   mesh_import?: {
     filename: string;
@@ -164,6 +172,15 @@ export interface LayerOptions {
    * instead of a fraction of the surface cell. Requires `count`.
    */
   target_y_plus?: number;
+}
+
+/** v9: shock front as an isosurface of density (compressible runs only). */
+export interface VizShock {
+  positions: number[];
+  indices: number[];
+  fields: { u_mag: number[] };
+  ranges: { u_mag: [number, number] };
+  triangles: number;
 }
 
 /** v8.6: what a requested y+ target worked out to for a run. */
@@ -709,6 +726,11 @@ export const api = {
   getVizSlice(id: string, axis: SliceAxis, pos?: number): Promise<VizSlice> {
     const q = pos !== undefined ? `&pos=${pos}` : "";
     return getJson<VizSlice>(`/runs/${id}/viz/slice?axis=${axis}${q}`);
+  },
+
+  getVizShock(id: string, compression?: number): Promise<VizShock> {
+    const q = compression === undefined ? "" : `?compression=${compression}`;
+    return getJson<VizShock>(`/runs/${id}/viz/shock${q}`);
   },
 
   getVizStreamlines(

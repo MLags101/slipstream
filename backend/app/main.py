@@ -870,6 +870,32 @@ def get_viz_streamlines(run_id: str, density: str = "med", region: str = "full")
         raise HTTPException(422, _compacted_msg(s) or str(e))
 
 
+@app.get("/api/runs/{run_id}/viz/shock")
+def get_viz_shock(run_id: str, compression: float | None = None):
+    """Shock front as an isosurface of density.
+
+    Compressible runs only: the incompressible solvers never write a rho
+    field, so there is nothing to isosurface and nothing to see.
+    """
+    s = _get_state(run_id)
+    if s["status"] != "done":
+        raise HTTPException(404, "visualization not available (run not done)")
+    if not foamcase.is_compressible(s["config"]):
+        raise HTTPException(
+            409, "shock surfaces need a compressible run: an incompressible "
+                 "solve has no density field and no shocks to show")
+    c = ondemand.SHOCK_COMPRESSION if compression is None else float(compression)
+    lo, hi = ondemand.SHOCK_COMPRESSION_RANGE
+    if not (lo <= c <= hi):
+        raise HTTPException(422, f"compression must be between {lo} and {hi}")
+    try:
+        return ondemand.shock_json(
+            DATA_DIR / run_id, float(s["config"].get("rho") or 1.225), c,
+            symmetry=bool(s["config"].get("symmetry")))
+    except RuntimeError as e:
+        raise HTTPException(422, _compacted_msg(s) or str(e))
+
+
 @app.post("/api/runs/{run_id}/cancel")
 def cancel_run(run_id: str):
     _get_state(run_id)

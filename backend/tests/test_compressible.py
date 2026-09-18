@@ -188,3 +188,33 @@ def test_supersonic_run_uses_the_cap(tmp_path):
 
 
 QUALITY_FINE_SURF_MAX = 7
+
+
+# --- shock isosurface -------------------------------------------------------
+
+def test_shock_payload_shape():
+    """Flat arrays the viewer can hand straight to three.js."""
+    import numpy as np
+    from app import ondemand
+    pts = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    tris = np.array([[0, 1, 2]])
+    fields = {"U": np.array([[10.0, 0, 0], [20, 0, 0], [30, 0, 0]])}
+    out = ondemand.shock_payload(pts, tris, fields)
+    assert len(out["positions"]) == 9
+    assert out["indices"] == [0, 1, 2]
+    assert out["triangles"] == 1
+    assert out["ranges"]["u_mag"] == pytest.approx([10.0, 30.0])
+
+
+def test_shock_payload_survives_a_missing_velocity_field():
+    import numpy as np
+    from app import ondemand
+    pts = np.array([[0.0, 0, 0], [1, 0, 0], [0, 1, 0]])
+    out = ondemand.shock_payload(pts, np.array([[0, 1, 2]]), {})
+    assert out["ranges"]["u_mag"] == [0.0, 0.0]
+
+
+def test_shock_compression_range_is_sane():
+    from app import ondemand
+    lo, hi = ondemand.SHOCK_COMPRESSION_RANGE
+    assert 0 < lo < ondemand.SHOCK_COMPRESSION < hi
