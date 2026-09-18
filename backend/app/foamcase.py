@@ -96,10 +96,26 @@ NPROCS = 6
 # outlet, or the shock reflects off the side walls back into the solution.
 SUPERSONIC_UPSTREAM_L = 1.0
 SUPERSONIC_DOWNSTREAM_L = 3.0
-# Surface refinement is capped for supersonic: the physics of interest is the
-# shock standing off in the field, not the boundary layer, and every extra
-# refinement level halves the Courant-limited time step.
-SUPERSONIC_SURF_MAX = 2
+# Surface refinement is capped for supersonic, because every extra level halves
+# the Courant-limited time step and the physics of interest is the shock
+# standing off in the field, not the boundary layer. The cap is expressed as
+# cells across the body rather than as a refinement level: the level that suits
+# a 0.3 m cone is 57x too coarse for a 17 m aircraft, because the domain (and
+# so the base cell) scales with the model.
+SUPERSONIC_CELLS_PER_BODY = 200
+
+
+def supersonic_level_cap(body_len_m: float, base_cell_m: float) -> int:
+    """Highest surface refinement level worth using on a supersonic run.
+
+    Refining past SUPERSONIC_CELLS_PER_BODY cells along the body buys detail
+    the shock does not need while halving the time step for every level.
+    """
+    target = body_len_m / SUPERSONIC_CELLS_PER_BODY
+    level = 0
+    while base_cell_m / (2 ** (level + 1)) >= target and level < 8:
+        level += 1
+    return level
 
 
 def supersonic_bounds(model: dict, mach: float,
@@ -428,10 +444,6 @@ def compute_params(model: dict, config: dict,
     T0 = float(config.get("temperature") or T_AMBIENT)
     mach = U0 / speed_of_sound(T0)
 
-    if flow_model(config) == "supersonic":
-        q["surf_max"] = min(q["surf_max"], SUPERSONIC_SURF_MAX)
-        q["surf_min"] = min(q["surf_min"], SUPERSONIC_SURF_MAX)
-
     ground = bool(config.get("ground_plane"))
     symmetry = bool(config.get("symmetry"))
     supersonic = flow_model(config) == "supersonic"
@@ -452,6 +464,11 @@ def compute_params(model: dict, config: dict,
         # Keep at least ~1.5 base cells between the model and the road so the
         # gap is meshable at coarse resolution.
         dz0 = min(dz0, bz0 - 1.5 * cell)
+    if supersonic:
+        cap = supersonic_level_cap(L, cell)
+        q["surf_max"] = min(q["surf_max"], cap)
+        q["surf_min"] = min(q["surf_min"], cap)
+
     nx = max(10, int(math.ceil(domain_len / cell)))
     ny = max(6, int(math.ceil((dy1 - dy0) / cell)))
     nz = max(6, int(math.ceil((dz1 - dz0) / cell)))

@@ -1962,3 +1962,18 @@ body {
   flex: 1 1 110px;
   gap: 4px;
 }
+
+/* Inline toggle in the 3D viewer toolbar (streamline flow animation). */
+.viewer-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim, #8b929c);
+  cursor: pointer;
+  user-select: none;
+}
+.viewer-check input {
+  margin: 0;
+  cursor: pointer;
+}

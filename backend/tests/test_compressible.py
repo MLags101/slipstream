@@ -149,3 +149,42 @@ def test_cp_references_ambient_only_when_absolute():
 
 def test_speed_of_sound_is_right_for_air():
     assert foamcase.speed_of_sound(288.15) == pytest.approx(340.3, abs=0.5)
+
+
+# --- supersonic refinement cap ---------------------------------------------
+
+def test_refinement_cap_scales_with_the_body_not_the_level():
+    """An absolute level cap tuned on a 0.3 m cone gave 0.3 m surface cells on
+    a 17 m aircraft, because the domain — and so the base cell — scales with
+    the model. Both should land near the same cells-along-body."""
+    cone = foamcase.supersonic_level_cap(0.30, 0.0212)
+    jet = foamcase.supersonic_level_cap(17.1, 1.221)
+    cells_cone = 0.30 / (0.0212 / 2 ** cone)
+    cells_jet = 17.1 / (1.221 / 2 ** jet)
+    assert 80 < cells_cone < 260
+    assert 80 < cells_jet < 260
+    assert abs(cells_cone - cells_jet) < 40
+
+
+def test_refinement_cap_never_goes_below_the_body_target():
+    """Refining past the target buys detail the shock does not need while
+    halving the time step for every level."""
+    for body, base in [(0.3, 0.02), (1.0, 0.05), (17.1, 1.2), (60.0, 4.0)]:
+        lvl = foamcase.supersonic_level_cap(body, base)
+        assert base / 2 ** lvl >= body / foamcase.SUPERSONIC_CELLS_PER_BODY
+        assert 0 <= lvl <= 8
+
+
+def test_supersonic_run_uses_the_cap(tmp_path):
+    big = {"bbox_m": [[-8.5, -6.0, -1.8], [8.5, 6.0, 1.8]],
+           "frontal_area_m2": 9.0, "centroid": [0.0, 0.0, 0.0]}
+    params = foamcase.compute_params(big, {
+        "wind_speed": 476.0, "quality": "fine", "flow_model": "supersonic",
+        "symmetry": True, "layers": {"count": 0}})
+    # "fine" asks for level 7; the supersonic cap must override it.
+    assert int(params["surfMax"]) < QUALITY_FINE_SURF_MAX
+    cell = params["base_cell"] / 2 ** int(params["surfMax"])
+    assert 17.0 / cell > 80
+
+
+QUALITY_FINE_SURF_MAX = 7

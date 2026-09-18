@@ -88,18 +88,63 @@ function streamlinesToSegments(viz: VizStreamlines): THREE.BufferGeometry {
   );
   const segPos: number[] = [];
   const segCol: number[] = [];
+  const segDist: number[] = [];
   for (const track of viz.lines) {
+    // Arc length accumulates along the whole track, not per segment: three's
+    // own computeLineDistances() restarts at every LineSegments pair, which
+    // would make each segment dash identically instead of the dashes running
+    // along the streamline.
+    let run = 0;
     for (let i = 0; i + 1 < track.length; i++) {
-      for (const idx of [track[i], track[i + 1]]) {
+      const a = track[i];
+      const b = track[i + 1];
+      const step = Math.hypot(
+        pos[3 * b] - pos[3 * a],
+        pos[3 * b + 1] - pos[3 * a + 1],
+        pos[3 * b + 2] - pos[3 * a + 2],
+      );
+      for (const [idx, d] of [[a, run], [b, run + step]] as [number, number][]) {
         segPos.push(pos[3 * idx], pos[3 * idx + 1], pos[3 * idx + 2]);
         segCol.push(colors[3 * idx], colors[3 * idx + 1], colors[3 * idx + 2]);
+        segDist.push(d);
       }
+      run += step;
     }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(segPos), 3));
   g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(segCol), 3));
+  g.setAttribute("lineDistance", new THREE.BufferAttribute(new Float32Array(segDist), 1));
   return g;
+}
+
+/**
+ * Streamline material whose dashes travel along the flow. three's
+ * LineDashedMaterial has no dash offset, so one is injected into its shader
+ * and driven from the render loop.
+ */
+function flowDashMaterial(dashSize: number): {
+  material: THREE.LineDashedMaterial;
+  offset: { value: number };
+} {
+  const offset = { value: 0 };
+  const material = new THREE.LineDashedMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.95,
+    dashSize,
+    gapSize: dashSize * 1.6,
+  });
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uDashOffset = offset;
+    shader.fragmentShader =
+      "uniform float uDashOffset;\n" +
+      shader.fragmentShader.replace(
+        "if ( mod( vLineDistance, totalSize ) > dashSize ) {",
+        "if ( mod( vLineDistance - uDashOffset, totalSize ) > dashSize ) {",
+      );
+  };
+  return { material, offset };
 }
 
 function grayContext(surface: VizSurface, opaque: boolean): THREE.Mesh {
@@ -238,6 +283,35 @@ export function ResultViewer({ runId, config, model, props }: Props) {
   const [streamDensity, setStreamDensity] = useState<StreamDensity>("med");
   const [streamRegion, setStreamRegion] = useState<StreamRegion>("full");
   const streamKey = `${streamDensity}/${streamRegion}`;
+  // Dashes travelling along the streamlines. Off by default: solid lines read
+  // better for a still, and the motion is a deliberate choice, not the norm.
+  const [flowAnim, setFlowAnim] = useState(false);
+
+  // Dash offset for the streamline flow animation, driven by a rAF loop while
+  // the streamline view is open.
+  const flowDashRef = useRef<{ offset: { value: number }; speed: number } | null>(
+    null,
+  );
+
+  // Advance the dash pattern while streamlines are shown. The viewer renders
+  // continuously, so moving the uniform is all that is needed.
+  useEffect(() => {
+    if (mode !== "streamlines" || !flowAnim) {
+      flowDashRef.current = null;
+      return;
+    }
+    let raf = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const d = flowDashRef.current;
+      if (d) d.offset.value += d.speed * dt;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mode, flowAnim]);
 
   // --- slice sweep animation state ---------------------------------------
   const [sweepPhase, setSweepPhase] = useState<"idle" | "sampling" | "playing">(
@@ -408,10 +482,27 @@ export function ResultViewer({ runId, config, model, props }: Props) {
           cache.streamlines[streamKey] = lines;
           if (cancelled) return;
 
-          const segs = new THREE.LineSegments(
-            streamlinesToSegments(lines),
-            new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
-          );
+          // Dash size scales with the model so the pattern reads the same on a
+          // 100 mm drone and a 5 m car.
+          const span = model
+            ? Math.max(
+                model.bbox_m[1][0] - model.bbox_m[0][0],
+                model.bbox_m[1][1] - model.bbox_m[0][1],
+                model.bbox_m[1][2] - model.bbox_m[0][2],
+              )
+            : 1;
+          let lineMat: THREE.Material;
+          if (flowAnim) {
+            const { material, offset } = flowDashMaterial(span * 0.06);
+            flowDashRef.current = { offset, speed: span * 0.35 };
+            lineMat = material;
+          } else {
+            flowDashRef.current = null;
+            lineMat = new THREE.LineBasicMaterial({
+              vertexColors: true, transparent: true, opacity: 0.9,
+            });
+          }
+          const segs = new THREE.LineSegments(streamlinesToSegments(lines), lineMat);
           const body = grayContext(surface, true);
           const group = new THREE.Group();
           group.add(segs);
@@ -478,7 +569,7 @@ export function ResultViewer({ runId, config, model, props }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, config.roll_deg, streamKey, sweeping, showProps, props]);
+  }, [runId, mode, sliceKey, sliceAxis, slicePos, config.unit, config.yaw_deg, config.pitch_deg, config.roll_deg, streamKey, sweeping, showProps, props, flowAnim]);
 
   /**
    * Stop the sweep: cancel any in-flight sampling and drop back to the
@@ -790,6 +881,14 @@ export function ResultViewer({ runId, config, model, props }: Props) {
                 </button>
               ))}
             </div>
+            <label className="viewer-check" title="Dashes travel along the streamlines in the flow direction">
+              <input
+                type="checkbox"
+                checked={flowAnim}
+                onChange={(e) => setFlowAnim(e.target.checked)}
+              />
+              <span>animate</span>
+            </label>
           </>
         )}
       </div>
