@@ -1,0 +1,16 @@
+services:
+  slipstream:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    environment:
+      # OpenFOAM uses six MPI ranks per analysis. Set this lower if Docker
+      # Desktop has fewer than six CPUs assigned to it.
+      SLIPSTREAM_SERIAL_MESH: "${SLIPSTREAM_SERIAL_MESH:-0}"
+    volumes:
+      - slipstream-data:/data
+    restart: unless-stopped
+
+volumes:
+  slipstream-data:

@@ -119,6 +119,26 @@ For development, run the backend (`uvicorn app.main:app --port 8000`) and fronte
 (`npm run dev`) separately; see [docs/CONTRACT.md](docs/CONTRACT.md) for the full
 architecture and API.
 
+## Run with Docker
+
+With Docker Desktop installed, run the complete app (frontend, API, and OpenFOAM)
+from the repository root:
+
+```sh
+docker compose up --build
+```
+
+Then open [http://localhost:8000](http://localhost:8000). The first start downloads
+the OpenFOAM base image and installs the application dependencies, so it can take a
+few minutes. Analyses are stored in the named `slipstream-data` Docker volume and
+are retained across `docker compose down` / subsequent starts. To remove the app
+and its saved analyses, use `docker compose down --volumes`.
+
+Slipstream launches six OpenFOAM MPI ranks per analysis. In Docker Desktop, assign
+at least six CPUs to Docker for normal performance. On a smaller machine, start it
+with `SLIPSTREAM_SERIAL_MESH=1 docker compose up --build` to mesh serially (the
+solver still benefits from the CPUs Docker makes available).
+
 ### Running the tests
 
 ```sh
