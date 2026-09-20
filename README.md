@@ -13,13 +13,13 @@ export as an STL. It wraps [OpenFOAM](https://www.openfoam.com)
 (the industry-standard open-source CFD solver) in a one-window app: no dictionaries,
 no meshing tutorials, no cloud fees.
 
-![Shock waves around an F/A-18 at Mach 1.4, shown as a density isosurface](docs/images/shock-f18.jpg)
+![Streamlines around a 5-inch quad frame with powered prop disks, 25 m/s](docs/images/streamlines.jpg)
 
 - **Drag & drop an STL** → live 3D preview showing exactly how it will sit in the tunnel
 - **Real CFD**: automatic meshing (snappyHexMesh) + steady RANS (simpleFoam, k-ω SST)
 - **Compressible and supersonic**: pick a flow model and go past Mach 1 —
   rhoSimpleFoam for transonic, shock-capturing rhoCentralFoam for supersonic,
-  with a shock-wave view (see above). Shock angles validate within 3.5% of the
+  with a shock-wave view. Shock angles validate within 3.5% of the
   exact analytical solution; see [docs/VALIDATION.md](docs/VALIDATION.md)
 - **Results that matter**: drag & lift coefficients and forces, frontal area,
   pressure-vs-viscous drag breakdown, convergence quality
@@ -45,13 +45,9 @@ no meshing tutorials, no cloud fees.
 - **Tidy run history**: rename runs, short run IDs, and failed runs free their
   mesh automatically (logs and convergence charts stay)
 
-| Streamlines: a 5-inch quad frame with powered prop disks, 25 m/s | Flow slice: prop downwash and wake |
+| Flow slice: prop downwash and wake | Shock waves: an F/A-18 at Mach 1.4 |
 |---|---|
-| ![Streamlines around a 5-inch quad frame with spinning prop disks](docs/images/streamlines.jpg) | ![Side flow slice showing prop downwash](docs/images/flow-slice.jpg) |
-
-Setup: drop an STL, configure, run.
-
-![Analysis setup with a sample quad frame](docs/images/setup.jpg)
+| ![Side flow slice showing prop downwash](docs/images/flow-slice.jpg) | ![Shock waves around an F/A-18 at Mach 1.4, shown as a density isosurface](docs/images/shock-f18.jpg) |
 
 ## Why
 
@@ -91,7 +87,8 @@ build every line of it. To open it the first time:
 Your STL is scaled, centered, and rotated to the requested attitude, then placed in
 an automatically-sized virtual tunnel (blockage-checked). snappyHexMesh builds a
 body-fitted hex mesh with boundary layers; simpleFoam solves steady incompressible
-RANS on all cores; force coefficients, residuals, slices, and streamlines are
+RANS on all cores (or rhoSimpleFoam / rhoCentralFoam when you pick a compressible
+flow model); force coefficients, residuals, slices, and streamlines are
 extracted and streamed to the UI live. Everything runs on **your** machine —
 no uploads, no accounts, no queue behind strangers.
 
