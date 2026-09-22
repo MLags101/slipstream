@@ -30,7 +30,7 @@ no meshing tutorials, no cloud fees.
   that finds the forward-flight attitude and per-motor thrust for weight and speed.
   Prop disks are placed on the motors automatically
 - Runs **auto-stop when converged**, saving 30–40% of solve time, and the mesh is
-  built on all cores
+  built in parallel
 - **Re-solve on an existing mesh**: change wind speed or prop thrust and skip meshing
 - **Bring your own mesh**: import a Gmsh, Fluent or OpenFOAM volume mesh, give each
   boundary a role, and solve on it ([docs/MESH_IMPORT.md](docs/MESH_IMPORT.md))
@@ -87,7 +87,7 @@ build every line of it. To open it the first time:
 Your STL is scaled, centered, and rotated to the requested attitude, then placed in
 an automatically-sized virtual tunnel (blockage-checked). snappyHexMesh builds a
 body-fitted hex mesh with boundary layers; simpleFoam solves steady incompressible
-RANS on all cores (or rhoSimpleFoam / rhoCentralFoam when you pick a compressible
+RANS in parallel (or rhoSimpleFoam / rhoCentralFoam when you pick a compressible
 flow model); force coefficients, residuals, slices, and streamlines are
 extracted and streamed to the UI live. Everything runs on **your** machine —
 no uploads, no accounts, no queue behind strangers.
@@ -111,6 +111,8 @@ cd ../backend && .venv/bin/pip install pywebview pyinstaller
   --icon ../assets/Slipstream.icns \
   --add-data "../frontend/dist:ui" \
   --add-data "app/foam_template:app/foam_template" \
+  --add-data "app/foam_template_compressible:app/foam_template_compressible" \
+  --add-data "app/foam_template_supersonic:app/foam_template_supersonic" \
   --collect-submodules app \
   --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
   --hidden-import uvicorn.protocols.http.auto \
@@ -139,8 +141,11 @@ coarse analysis against a backend on `:8000` and does.
 - CFD accuracy depends on mesh resolution: **coarse** answers "is A better than B",
   **fine** answers "what's the number". Trust trends more than the third decimal.
 - How close it gets to real wind tunnel data, and where it doesn't, is measured in
-  [docs/VALIDATION.md](docs/VALIDATION.md) (sphere and Ahmed body).
-- Runs are CPU-hungry by design — a coarse run uses ~6 cores for a few minutes.
+  [docs/VALIDATION.md](docs/VALIDATION.md) (sphere, Ahmed body, and supersonic
+  wedge and cone shock angles against the exact solutions).
+- Supersonic runs are the newest and least forgiving: very sharp noses can diverge
+  on medium/fine meshes. If one fails, try coarse, or a slightly rounded tip.
+- Runs are CPU-hungry by design — every run uses 6 cores; a coarse one takes a few minutes.
 - Run data lives in `~/.slipstream` (OpenFOAM can't handle spaces in paths, so not
   `~/Library/Application Support`).
 

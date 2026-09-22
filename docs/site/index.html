@@ -53,6 +53,7 @@ footer{margin-top:70px;text-align:center;color:#667080;font-size:12.5px;
 footer a{color:var(--text2)}
 .shots{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px}
 .shots img{width:100%;border:1px solid var(--border);display:block}
+.shots .wide{grid-column:1/-1}
 @media(max-width:640px){.shots{grid-template-columns:1fr}}
 </style>
 </head>
@@ -74,9 +75,9 @@ footer a{color:var(--text2)}
   <section>
     <h2>Screenshots</h2>
     <div class="shots">
-      <!-- Drop PNGs into docs/site/ and update these -->
-      <img src="shot-results.jpg" alt="Results view with drag coefficient">
-      <img src="shot-slice.jpg" alt="Flow slice showing wake">
+      <img class="wide" src="streamlines.jpg" alt="Streamlines around a 5-inch quad frame with powered prop disks">
+      <img src="flow-slice.jpg" alt="Side flow slice showing prop downwash and wake">
+      <img src="shock-f18.jpg" alt="Shock waves around an F/A-18 at Mach 1.4">
     </div>
   </section>
 
@@ -88,6 +89,7 @@ footer a{color:var(--text2)}
       <div class="card"><h3>See the flow</h3><p>Surface pressure, movable slice planes with sweep animation, velocity-colored streamlines.</p></div>
       <div class="card"><h3>Attitude sweeps</h3><p>Yaw or pitch sweeps with Cd-vs-angle charts, plus side-by-side run comparison.</p></div>
       <div class="card"><h3>Powered flight</h3><p>For aircraft: propeller actuator disks show downwash and airframe download from real thrust values.</p></div>
+      <div class="card"><h3>Past Mach 1</h3><p>Compressible and supersonic solvers with a shock-wave view. Shock angles land within 3.5% of the exact solution.</p></div>
       <div class="card"><h3>Auto-trim</h3><p>Give it weight and speed — it iterates CFD to find the forward-flight tilt and per-motor thrust.</p></div>
     </div>
   </section>
