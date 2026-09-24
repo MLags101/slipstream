@@ -38,6 +38,8 @@ jobs:
             --icon ../assets/Slipstream.icns \
             --add-data "../frontend/dist:ui" \
             --add-data "app/foam_template:app/foam_template" \
+            --add-data "app/foam_template_compressible:app/foam_template_compressible" \
+            --add-data "app/foam_template_supersonic:app/foam_template_supersonic" \
             --collect-submodules app \
             --hidden-import uvicorn.logging --hidden-import uvicorn.loops.auto \
             --hidden-import uvicorn.protocols.http.auto \
